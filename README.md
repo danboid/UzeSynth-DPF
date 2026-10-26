@@ -1,0 +1,152 @@
+# UzeSynth
+
+An open source synth plugin that emulates the [Uzebox](https://uzebox.org) sound engine.
+Load a `.inc` file of Uzebox patches, pick a patch, and play it from your DAW.
+
+It builds as **VST3, VST2, CLAP, LV2** and a **JACK standalone** on Linux, and the same
+code targets Windows and macOS (plus **AU** on macOS) through the
+[DPF](https://github.com/DISTRHO/DPF) plugin framework. The only dependencies are DPF
+(a git submodule) and the system's X11/OpenGL libraries.
+
+## Features
+
+- **Bit-exact engine.** A line-by-line port of the kernel's `ProcessMusic()`, `TriggerNote()`,
+  `TriggerFx()` and patch commands (`uzeboxSoundEngine.c`) and the VSYNC mixer
+  (`soundMixerVsync.s`), using the AVR's integer widths and rounding.
+  It runs at the console's real mixing rate (15734.26 Hz, 262 samples per 60 Hz frame) and
+  is then resampled to your DAW's rate.
+- **Patch files.** Reads the C patch files used by Uzebox games and Uzebox Patch Studio,
+  including `#define`s, simple expressions and the `PatchStruct` table. The comment above
+  each patch is shown as its label.
+- **Custom wavetables.** Load the wavetable a game uses with `-DMIXER_WAVES=...`.
+- **Three modes:**
+  - **Melodic:** the selected patch, MIDI note = pitch.
+  - **Drum kit:** MIDI note *n* plays patch *n* on the noise channel, exactly like
+    MIDI channel 4 in a Uzebox song.
+  - **Sound FX:** MIDI note *n* triggers patch *n* the way a game calls `TriggerFx()`
+    (note 80, full track volume, note-offs ignored until the effect ends).
+- **Session recall.** The patch file, wavetable and selected patch are stored *inside* the
+  DAW project, so sessions still load if the original files move.
+- **Kernel MIDI controllers:** CC 7 (track volume), 11 (expression), 92 (tremolo level),
+  100 (tremolo rate), plus 120/123 (all sound/notes off).
+
+## Building on Linux
+
+Install a compiler, CMake and the X11/OpenGL headers.
+
+| Distro | Command |
+|---|---|
+| Debian / Ubuntu | `sudo apt install build-essential cmake git pkg-config libx11-dev libxext-dev libxrandr-dev libxcursor-dev libgl-dev libdbus-1-dev` |
+| Arch | `sudo pacman -S base-devel cmake git pkgconf libx11 libxext libxrandr libxcursor mesa dbus` |
+| Fedora | `sudo dnf install gcc-c++ cmake git pkgconf libX11-devel libXext-devel libXrandr-devel libXcursor-devel mesa-libGL-devel dbus-devel` |
+
+`libdbus-1-dev` is optional. With it, "load file" opens your desktop's native file dialog
+through the XDG portal; without it DPF uses its own built-in dialog.
+
+Then:
+
+```sh
+git submodule update --init --recursive    # fetches DPF
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+The plugins end up in `build/bin/`. To install them for your user:
+
+```sh
+mkdir -p ~/.vst3 ~/.clap ~/.lv2 ~/.vst
+cp -r build/bin/uzesynth.vst3 ~/.vst3/
+cp    build/bin/uzesynth.clap ~/.clap/
+cp -r build/bin/uzesynth.lv2  ~/.lv2/
+cp    build/bin/uzesynth-vst2.so ~/.vst/
+```
+
+`build/bin/uzesynth` is a JACK standalone version.
+
+### Windows and macOS
+
+Windows and macOS use the same commands: Visual Studio or MinGW on Windows, Xcode command
+line tools on macOS. They have not been tested yet. `.github/workflows/build.yml` builds all
+three platforms on GitHub Actions, so pushing the repo to GitHub is the quickest way to find
+out what needs fixing.
+
+## Using it
+
+1. Click the **folder** icon and load a patch file, for example a game's `patches.inc`.
+2. Optionally click the **wave** icon to load a custom wavetable. **Default** goes back to
+   the kernel's 10 built-in waves.
+3. Choose a mode.
+   - In **Melodic** mode, pick a patch from the drop-down. You can also scroll the mouse
+     wheel over it to step through patches.
+   - In **Drum kit** and **Sound FX** modes the drop-down shows which MIDI note plays which
+     patch. Note 0 (C-1) is patch 0, just as on the console.
+
+The host's generic parameter view also shows these parameters:
+
+| Parameter | Meaning |
+|---|---|
+| Polyphony | 1 = one Uzebox track (authentic). 2-8 run several emulated tracks, and their sum is clipped to 8 bits the way the console's mixer clips its channels. |
+| Master Volume | The kernel master volume. The default is 0x6f (`DEFAULT_MASTER_VOL`), the level games play at unless they call `SetMasterVolume()`. |
+| Output | **Smooth**: band-limited resampling. **Raw**: the stepped 8-bit samples held at your DAW's rate. |
+| Mode | Melodic / Drum kit / Sound FX |
+
+### Wavetable formats
+
+- **Assembler**, as used with `MIXER_WAVES`: `.byte 0x00,0x03,...` (or `.db`).
+- **C arrays:** `const char waves[] PROGMEM = { ... };`. All arrays are joined in file order.
+- **Raw binary:** `.raw`, `.bin` or `.pcm` files, 256 bytes per wave.
+
+Each wave is 256 signed 8-bit samples, and up to 256 waves are used. Note that tremolo
+modulates with wave 0 of the *loaded* table, exactly as the kernel does.
+
+## Command-line renderer
+
+`build/bin/uzerender` (built along with the plugin) lists the patches in a file, or renders
+one patch to an 8-bit, 15734 Hz WAV. The WAV holds exactly the samples a Uzebox writes to
+its audio output, which is handy for comparing against cuzebox or real hardware.
+
+```sh
+uzerender patches.inc                              # list patch table
+uzerender patches.inc patch03 out.wav 60 1.0 127   # note, hold seconds, velocity
+uzerender --waves sounds.inc patches.inc 5 out.wav # custom wavetable, patch number 5
+uzerender --drum patches.inc 7 hat.wav             # drum kit: patch 7 on noise channel
+uzerender --fx patches.inc 1 fx.wav                # as TriggerFx(1, ...)
+```
+
+## Accuracy notes
+
+These kernel behaviours are reproduced on purpose, even where Uzebox Patch Studio differs:
+
+- Channel volume multiplies note, track, envelope, expression and master volumes in
+  sequence, each step with the kernel's `+0x100 >> 8` rounding.
+- Each channel contributes `(sample × volume) >> 8`, rounding down like the AVR `mulsu`
+  instruction, and the sum is clipped to −128…127.
+- Wave position is kept between notes, and only `SetMixerNote` and `SetMixerWave` change it.
+- `PC_SLIDE` uses 16-bit signed maths, so slides go down correctly.
+- `PC_NOTE_HOLD` pauses the command stream until note-off. Note-off only cuts a note when
+  its envelope speed is 0 and it is not being held.
+- The noise LFSR follows `soundMixerVsync.s` exactly, including the 7-bit mode bit layout.
+- Kernel quirks are kept too: `PC_WAVE 0xff` on the noise channel sets the divider bits,
+  and a slide on the noise channel changes the noise generator's settings and shift register.
+
+Deliberate differences from a real console:
+
+- A note-on starts that voice's 60 Hz frame immediately, rather than waiting up to 16 ms for
+  the next video frame.
+- In mono mode, a note-off only releases the note it belongs to. On the console any note-off
+  on the channel affects the playing note, so keep tracks meant for hardware monophonic.
+- Patch commands that would read outside the patch or wavetable (out-of-range waves, pitches
+  above note 126, loops jumping before the patch start) are clamped or wrapped instead of
+  reading random flash.
+- The real console's PWM audio output and board filter are not modelled.
+
+## Roadmap
+
+- PCM patches (type 2) and the 5th, PCM channel
+- A patch editor in the UI
+- Verification against cuzebox recordings across all demo patch files
+
+## License
+
+GPL-3.0-or-later, the same as the Uzebox kernel it is ported from. The wave and step tables
+are taken from the kernel source (© 2008 Alec Bourque). DPF is ISC-licensed.
