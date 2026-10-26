@@ -68,6 +68,24 @@ void UzeboxSynth::setSoundData(const SoundData* d)
     }
 }
 
+void UzeboxSynth::setMixer(UzeboxVoice::Mixer m)
+{
+    for (auto& v : voices)
+        v.setMixer(m);
+}
+
+namespace {
+UzeboxVoice::Channel channelFor(const PatchData& p)
+{
+    switch (p.type)
+    {
+    case PatchType::Noise: return UzeboxVoice::Channel::Noise;
+    case PatchType::Pcm:   return UzeboxVoice::Channel::Pcm;
+    default:               return UzeboxVoice::Channel::Wave;
+    }
+}
+} // namespace
+
 void UzeboxSynth::setPlayMode(PlayMode m)
 {
     if (m == playMode)
@@ -152,9 +170,7 @@ void UzeboxSynth::noteOn(uint8_t key, uint8_t velocity)
         if (patch == nullptr)
             return;
         v = allocateVoice(key);
-        const auto ch = patch->type == PatchType::Noise ? UzeboxVoice::Channel::Noise
-                                                        : UzeboxVoice::Channel::Wave;
-        if (!v->noteOn(patch, key, volume, ch))
+        if (!v->noteOn(patch, key, volume, channelFor(*patch)))
             return;
         break;
     }
@@ -175,8 +191,8 @@ void UzeboxSynth::noteOn(uint8_t key, uint8_t velocity)
         if (patch == nullptr)
             return;
         v = allocateVoice(key);
-        v->triggerFx(patch, volume, patch->type == PatchType::Noise ? UzeboxVoice::Channel::Noise
-                                                                    : UzeboxVoice::Channel::Wave);
+        // TriggerFx: type 1 -> channel 3 (noise), type 2 -> PCM channel
+        v->triggerFx(patch, volume, channelFor(*patch));
         break;
     }
     }

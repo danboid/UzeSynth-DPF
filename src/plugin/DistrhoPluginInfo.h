@@ -26,7 +26,7 @@
 #define DISTRHO_UI_FILE_BROWSER        1
 #define DISTRHO_UI_USER_RESIZABLE      0
 #define DISTRHO_UI_DEFAULT_WIDTH       420
-#define DISTRHO_UI_DEFAULT_HEIGHT      330
+#define DISTRHO_UI_DEFAULT_HEIGHT      350
 
 #define DISTRHO_PLUGIN_LV2_CATEGORY    "lv2:InstrumentPlugin"
 #define DISTRHO_PLUGIN_VST3_CATEGORIES "Instrument|Synth"
@@ -37,12 +37,13 @@ enum Parameters {
     kParamMasterVolume,
     kParamOutputMode,
     kParamPlayMode,      // 0 melodic, 1 drum kit (noise channel), 2 sound FX
+    kParamMixer,         // 0 VSYNC mixer (kernel default), 1 inline mixer
     kParamCount
 };
 
 enum States {
-    kStateFileText = 0,  // full text of the loaded .inc file (so sessions don't depend on the file)
-    kStateFileName,      // path it was loaded from, for display
+    kStateFileText = 0,  // full text of the loaded .inc file(s) (so sessions don't depend on the files)
+    kStateFileName,      // path(s) they were loaded from, one per line, for display
     kStatePatchName,     // selected patch (array name)
     kStateWaves,         // custom wavetable as hex, empty = kernel default waves
     kStateWavesName,     // path the wavetable was loaded from, for display

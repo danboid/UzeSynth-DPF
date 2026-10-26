@@ -50,6 +50,7 @@ public:
     void setMasterVolume(uint8_t v) { master = v; }
     void setOutputMode(OutputMode m) { mode = m; }
     void setPlayMode(PlayMode m);
+    void setMixer(UzeboxVoice::Mixer m);
 
     // MIDI (channel is ignored: the plugin is one Uzebox track)
     void noteOn(uint8_t key, uint8_t velocity);

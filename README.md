@@ -19,6 +19,12 @@ code targets Windows and macOS (plus **AU** on macOS) through the
   including `#define`s, simple expressions and the `PatchStruct` table. The comment above
   each patch is shown as its label.
 - **Custom wavetables.** Load the wavetable a game uses with `-DMIXER_WAVES=...`.
+- **PCM patches.** Sample-based patches (`PatchStruct` type 2, and type 1 with sample data as
+  used by games built with `MIXER_CHAN4_TYPE=1`) play on an emulated PCM channel, including
+  loop points, pitch from the step table, and the patch's command stream (envelopes, slides,
+  pitch changes). Sample arrays kept in a separate file are found automatically.
+- **Both kernel mixers.** Switch between the default VSYNC mixer and the inline mixer
+  (`SOUND_MIXER=1`). They differ in how PCM loops and in the noise channel's output.
 - **Three modes:**
   - **Melodic:** the selected patch, MIDI note = pitch.
   - **Drum kit:** MIDI note *n* plays patch *n* on the noise channel, exactly like
@@ -73,6 +79,10 @@ out what needs fixing.
 ## Using it
 
 1. Click the **folder** icon and load a patch file, for example a game's `patches.inc`.
+   If its patch table refers to PCM sample arrays that aren't in that file, UzeSynth looks
+   for them in the other `.inc`/`.h` files in the same folder (and in `data/` and the parent
+   folder) and loads those too. If a sample still can't be found, a message tells you which
+   one, and **+ File** lets you add the file yourself.
 2. Optionally click the **wave** icon to load a custom wavetable. **Default** goes back to
    the kernel's 10 built-in waves.
 3. Choose a mode.
@@ -89,6 +99,29 @@ The host's generic parameter view also shows these parameters:
 | Master Volume | The kernel master volume. The default is 0x6f (`DEFAULT_MASTER_VOL`), the level games play at unless they call `SetMasterVolume()`. |
 | Output | **Smooth**: band-limited resampling. **Raw**: the stepped 8-bit samples held at your DAW's rate. |
 | Mode | Melodic / Drum kit / Sound FX |
+| Kernel Mixer | **VSYNC** (the kernel default, also used by PCM games built with `MIXER_CHAN4_TYPE=1` such as Donkey Kong, Space Invaders and Atomix) or **Inline** (`SOUND_MIXER=1`, e.g. Arkanoid and Super Mario, where PCM is a separate 5th channel). Pick the one the game you're writing for uses. |
+
+### PCM patches
+
+A PCM patch plays its sample at the pitch given by the step table, like any other channel:
+note 35 (B1) is very close to the sample's natural rate of 15734 Hz, and each octave up
+doubles the speed. In **Melodic** mode the MIDI note sets the pitch. In **Sound FX** mode,
+as with `TriggerFx()`, PCM patches play at note 80, which is 13.5 times the natural rate;
+that is what the console does too, which is why games usually play samples with
+`TriggerNote()` instead. **Drum kit** mode always uses the noise channel, as MIDI channel 4
+does, so PCM patches only play their command stream there.
+
+The sample's loop runs from `loopStart` to `loopEnd` (byte offsets into the sample).
+The two mixers loop differently, and both are emulated exactly:
+
+- **Inline:** when playback passes `loopEnd`, it moves back by the loop length.
+- **VSYNC:** it jumps to *(position at the start of the current 60 Hz frame − loop length)*,
+  so it can land before `loopStart`.
+
+Where the console would then read bytes outside the sample (neighbouring flash), UzeSynth
+plays silence. A one-shot sample (`loopStart == loopEnd`) plays to the end, after which the
+VSYNC mixer repeats the last frame's worth of samples, as on hardware; samples normally end
+in silence, so this is inaudible.
 
 ### Wavetable formats
 
@@ -111,6 +144,9 @@ uzerender patches.inc patch03 out.wav 60 1.0 127   # note, hold seconds, velocit
 uzerender --waves sounds.inc patches.inc 5 out.wav # custom wavetable, patch number 5
 uzerender --drum patches.inc 7 hat.wav             # drum kit: patch 7 on noise channel
 uzerender --fx patches.inc 1 fx.wav                # as TriggerFx(1, ...)
+uzerender patches.inc intro_PCM_Data intro.wav 20  # PCM patch (samples found automatically)
+uzerender --add samples.inc patches.inc 7 s.wav    # add a sample file explicitly
+uzerender --inline patches.inc 7 s.wav             # emulate the inline mixer
 ```
 
 ## Accuracy notes
@@ -137,12 +173,14 @@ Deliberate differences from a real console:
   on the channel affects the playing note, so keep tracks meant for hardware monophonic.
 - Patch commands that would read outside the patch or wavetable (out-of-range waves, pitches
   above note 126, loops jumping before the patch start) are clamped or wrapped instead of
-  reading random flash.
+  reading random flash. PCM playback outside its sample is silent.
+- `PC_WAVE` on a PCM patch is ignored (the kernel would move playback into the wavetable).
+- In poly mode each voice is a complete track with its own channel, so you can have more
+  than one noise or PCM sound at once, which the console can't.
 - The real console's PWM audio output and board filter are not modelled.
 
 ## Roadmap
 
-- PCM patches (type 2) and the 5th, PCM channel
 - A patch editor in the UI
 - Verification against cuzebox recordings across all demo patch files
 

@@ -60,6 +60,7 @@ void UzeboxVoice::reset()
     streamPos = -1;
 
     noise = false;
+    pcm = false;
     volume = 0;
     step = 0;
     pos = 0;
@@ -67,6 +68,11 @@ void UzeboxVoice::reset()
     noiseParams = 0;
     barrel = 0;
     divider = 0;
+    pcmPos = 0;
+    pcmFrac = 0;
+    pcmLoopLen = 0;
+    pcmLoopEnd = 0;
+    pcmLoopTarget = 0;
 
     samplesUntilFrame = 0;
     midiKey = -1;
@@ -105,6 +111,12 @@ void UzeboxVoice::setMixerNote(uint8_t n)
 
 void UzeboxVoice::setMixerWave(uint8_t w)
 {
+    if (pcm)
+    {
+        // The kernel would overwrite the high byte of the PCM position with the
+        // wavetable's address, jumping playback into the wavetable. Ignored.
+        return;
+    }
     if (noise)
     {
         // Channel 3: 0xfe selects 7-bit LFSR, 0xff "15-bit" (the kernel does
@@ -195,11 +207,24 @@ void UzeboxVoice::triggerCommon(const PatchData* p, uint8_t vol, uint8_t n, Chan
 
     patch = p;
     noise = (channel == Channel::Noise);
+    pcm = (channel == Channel::Pcm);
 
     if (noise)
     {
         barrel = 0x0101;
         noiseParams = 1; // 15 bits, no divider
+    }
+    else if (pcm)
+    {
+        // mixer.channels.type.pcm.position = pcmData; positionFrac = 0;
+        // pcmLoopLength = loopEnd - loopStart; pcmLoopEnd = pcmData + loopEnd;
+        pcmFrac = 0;
+        pcmPos = 0;
+        const int32_t ls = p != nullptr ? p->loopStart : 0;
+        const int32_t le = p != nullptr ? p->loopEnd : 0;
+        pcmLoopLen = static_cast<int16_t>(le - ls); // 16-bit 'int' on the AVR
+        pcmLoopEnd = le;
+        setMixerNote(n);
     }
     else
     {
@@ -457,13 +482,39 @@ int UzeboxVoice::renderSample(uint8_t masterVolume)
     {
         processFrame(masterVolume);
         samplesUntilFrame = kSamplesPerFrame;
+        // soundMixerVsync.s computes the PCM loop target once, before mixing
+        // the frame: "movw r10,ZL / sub r10,loop_len" (current position - loop length)
+        pcmLoopTarget = pcmPos - pcmLoopLen;
     }
     --samplesUntilFrame;
 
     int8_t sample;
     if (noise)
     {
-        // dec r24 / brpl no_shift
+        if (mixer == Mixer::Inline)
+        {
+            // soundMixerInline.s: output first, from the current LFSR bit,
+            // as +/- (vol >> 1); then step the divider by 2 (bit 0 is the mode bit)
+            const int half = volume >> 1;
+            const int out = (barrel & 1) ? -half : half;
+            if (divider < 2)
+            {
+                const uint8_t lo = static_cast<uint8_t>(barrel & 0xff);
+                const bool t = ((lo ^ (lo >> 1)) & 1) != 0;
+                barrel = static_cast<uint16_t>(barrel >> 1);
+                barrel = static_cast<uint16_t>(t ? (barrel | 0x4000) : (barrel & ~0x4000));
+                if (!(noiseParams & 1))
+                    barrel = static_cast<uint16_t>(t ? (barrel | 0x0040) : (barrel & ~0x0040));
+                divider = noiseParams;
+            }
+            else
+            {
+                divider = static_cast<uint8_t>(divider - 2);
+            }
+            return out;
+        }
+
+        // soundMixerVsync.s: dec r24 / brpl no_shift
         divider = static_cast<uint8_t>(divider - 1);
         if (divider & 0x80)
         {
@@ -476,6 +527,28 @@ int UzeboxVoice::renderSample(uint8_t masterVolume)
                 barrel = static_cast<uint16_t>(t ? (barrel | 0x0040) : (barrel & ~0x0040)); // bld r22,6
         }
         sample = (barrel & 1) ? int8_t(127) : int8_t(-128);
+    }
+    else if (pcm)
+    {
+        // add step: frac += step_lo, position += step_hi + carry (16-bit pointer)
+        const unsigned f = static_cast<unsigned>(pcmFrac) + (step & 0xff);
+        pcmFrac = static_cast<uint8_t>(f);
+        pcmPos += static_cast<int32_t>(step >> 8) + static_cast<int32_t>(f >> 8);
+
+        if (pcmPos >= pcmLoopEnd)
+        {
+            if (mixer == Mixer::Inline)
+                pcmPos -= pcmLoopLen;     // ch5_reset: position - loop length
+            else
+                pcmPos = pcmLoopTarget;   // movw ZL,r10
+        }
+
+        // Outside the sample the real console reads neighbouring flash; we read silence.
+        const std::vector<uint8_t>* data = patch != nullptr ? &patch->sample : nullptr;
+        if (data != nullptr && pcmPos >= 0 && pcmPos < static_cast<int32_t>(data->size()))
+            sample = static_cast<int8_t>((*data)[static_cast<size_t>(pcmPos)]);
+        else
+            sample = 0;
     }
     else
     {

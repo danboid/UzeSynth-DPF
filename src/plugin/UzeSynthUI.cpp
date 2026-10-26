@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 START_NAMESPACE_DISTRHO
 
@@ -34,13 +35,30 @@ struct Box {
 const Box kLoadBox   { kPad, 54.0f, 44.0f, 40.0f };
 const Box kWavesBox  { kPad, 102.0f, 44.0f, 40.0f };
 const Box kResetBox  { kW - kPad - 64.0f, 111.0f, 64.0f, 22.0f };
+const Box kAddBox    { kW - kPad - 64.0f, 63.0f, 64.0f, 22.0f };
+const Box kMixerBox  { 120.0f, 266.0f, kW - 120.0f - kPad, 22.0f };
 const Box kModeBox   { kPad, 156.0f, kW - 2 * kPad, 28.0f };
 const Box kComboBox  { kPad, 198.0f, kW - 2 * kPad, 32.0f };
 const Box kListBox   { kPad, 44.0f, kW - 2 * kPad, kH - 44.0f - 8.0f };
 
 const char* const kModeNames[3] = { "Melodic", "Drum kit", "Sound FX" };
+const char* const kMixerNames[2] = { "VSYNC (default)", "Inline" };
 
-enum class Browse { None, Patches, Waves };
+enum class Browse { None, Patches, AddFile, Waves };
+
+std::vector<std::string> splitLines(const std::string& s)
+{
+    std::vector<std::string> out;
+    size_t a = 0;
+    while (a < s.size())
+    {
+        size_t b = s.find('\n', a);
+        if (b == std::string::npos) b = s.size();
+        if (b > a) out.push_back(s.substr(a, b - a));
+        a = b + 1;
+    }
+    return out;
+}
 
 std::string baseName(const std::string& path)
 {
@@ -86,6 +104,11 @@ protected:
             fListOpen = false;
             repaint();
         }
+        else if (index == kParamMixer)
+        {
+            fMixer = value >= 0.5f ? 1 : 0;
+            repaint();
+        }
     }
 
     void stateChanged(const char* key, const char* value) override
@@ -95,8 +118,9 @@ protected:
 
         if (std::strcmp(key, UZESYNTH_STATE_FILE_TEXT) == 0)
         {
-            fBank = uze::parsePatchFile(value);
-            fStatus = fBank.error;
+            fFileText = value;
+            fBank = uze::parsePatchFile(fFileText);
+            fStatus = fBank.error.empty() ? missingSamplesMessage() : fBank.error;
         }
         else if (std::strcmp(key, UZESYNTH_STATE_FILE_NAME) == 0)
         {
@@ -138,6 +162,8 @@ protected:
 
         if (what == Browse::Waves)
             loadWavetable(filename, contents);
+        else if (what == Browse::AddFile)
+            addFile(filename, contents);
         else
             loadPatches(filename, contents);
         repaint();
@@ -170,8 +196,10 @@ protected:
         // patch file row
         drawIconButton(kLoadBox, fHover == Hover::Load, false);
         drawRowLabel(kLoadBox,
-                     fFilePath.empty() ? "Click the folder to load a .inc patch file" : baseName(fFilePath),
-                     fFilePath.empty());
+                     fFilePath.empty() ? "Click the folder to load a .inc patch file" : filesLabel(),
+                     fFilePath.empty(), fFilePath.empty() ? 0 : kAddBox.w + 8);
+        if (!fFilePath.empty())
+            drawSmallButton(kAddBox, "+ File", fHover == Hover::Add);
 
         // wavetable row
         drawIconButton(kWavesBox, fHover == Hover::Waves, true);
@@ -185,16 +213,7 @@ protected:
             drawRowLabel(kWavesBox, label, fWaveCount == 0, fWaveCount > 0 ? kResetBox.w + 8 : 0);
         }
         if (fWaveCount > 0)
-        {
-            beginPath();
-            roundedRect(kResetBox.x, kResetBox.y, kResetBox.w, kResetBox.h, 4);
-            fillColor(fHover == Hover::Reset ? Color(70, 76, 96) : Color(44, 48, 62));
-            fill();
-            fontSize(12.0f);
-            textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-            fillColor(Color(200, 204, 214));
-            text(kResetBox.x + kResetBox.w / 2, kResetBox.y + kResetBox.h / 2, "Default", nullptr);
-        }
+            drawSmallButton(kResetBox, "Default", fHover == Hover::Reset);
 
         drawModeSwitch();
         drawCombo();
@@ -211,11 +230,17 @@ protected:
         {
             if (const uze::Patch* p = currentPatch())
             {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "%s channel  -  %u bytes  -  %u patches in file",
-                              p->data.type == uze::PatchType::Noise ? "Noise" : "Wave",
-                              static_cast<unsigned>(p->data.stream.size()),
-                              static_cast<unsigned>(fBank.patches.size()));
+                char buf[160];
+                if (p->data.type == uze::PatchType::Pcm)
+                    std::snprintf(buf, sizeof(buf), "PCM channel  -  sample %u bytes, loop %d-%d  -  %u patches",
+                                  static_cast<unsigned>(p->data.sample.size()),
+                                  static_cast<int>(p->data.loopStart), static_cast<int>(p->data.loopEnd),
+                                  static_cast<unsigned>(fBank.patches.size()));
+                else
+                    std::snprintf(buf, sizeof(buf), "%s channel  -  %u bytes  -  %u patches in file",
+                                  p->data.type == uze::PatchType::Noise ? "Noise" : "Wave",
+                                  static_cast<unsigned>(p->data.stream.size()),
+                                  static_cast<unsigned>(fBank.patches.size()));
                 fillColor(Color(150, 156, 170));
                 text(kPad, 248, buf, nullptr);
             }
@@ -227,8 +252,16 @@ protected:
                                        : "MIDI note n triggers patch n as a sound effect (TriggerFx)", nullptr);
         }
 
+        // kernel mixer selector
+        fontSize(12.0f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(Color(150, 156, 170));
+        text(kPad, kMixerBox.y + kMixerBox.h / 2, "Kernel mixer", nullptr);
+        drawSegments(kMixerBox, kMixerNames, 2, fMixer, 12.0f);
+
         fillColor(Color(100, 106, 120));
         fontSize(11.0f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
         text(kPad, kH - 16, "MIDI CC 7 volume  -  11 expression  -  92 tremolo level  -  100 tremolo rate", nullptr);
 
         if (fListOpen)
@@ -262,6 +295,24 @@ protected:
         if (kLoadBox.contains(x, y))
         {
             openBrowser(Browse::Patches, "Load Uzebox patch file (.inc)", fFilePath);
+            return true;
+        }
+        if (!fFilePath.empty() && kAddBox.contains(x, y))
+        {
+            openBrowser(Browse::AddFile, "Add a file (e.g. PCM sample data)", fFilePath);
+            return true;
+        }
+        if (kMixerBox.contains(x, y))
+        {
+            const int m = (x - kMixerBox.x) < kMixerBox.w / 2 ? 0 : 1;
+            if (m != fMixer)
+            {
+                fMixer = m;
+                editParameter(kParamMixer, true);
+                setParameterValue(kParamMixer, static_cast<float>(m));
+                editParameter(kParamMixer, false);
+                repaint();
+            }
             return true;
         }
         if (fWaveCount > 0 && kResetBox.contains(x, y))
@@ -317,6 +368,7 @@ protected:
                 row = rowAt(y);
         }
         else if (kLoadBox.contains(x, y))  h = Hover::Load;
+        else if (!fFilePath.empty() && kAddBox.contains(x, y)) h = Hover::Add;
         else if (kWavesBox.contains(x, y)) h = Hover::Waves;
         else if (fWaveCount > 0 && kResetBox.contains(x, y)) h = Hover::Reset;
 
@@ -354,12 +406,15 @@ protected:
     }
 
 private:
-    enum class Hover { None, Load, Waves, Reset };
+    enum class Hover { None, Load, Add, Waves, Reset };
 
     uze::PatchBank fBank;
-    std::string fFilePath, fPatchName, fWavesPath, fStatus;
+    std::string fFileText;
+    std::string fFilePath; // one path per line
+    std::string fPatchName, fWavesPath, fStatus;
     int fWaveCount = 0; // 0 = kernel default waves
     int fMode = 0;
+    int fMixer = 0;
     Browse fBrowse = Browse::None;
     bool fListOpen = false;
     Hover fHover = Hover::None;
@@ -371,7 +426,8 @@ private:
     void openBrowser(Browse what, const char* title, const std::string& near)
     {
         fBrowse = what;
-        const std::string dir = dirName(near);
+        const std::vector<std::string> lines = splitLines(near);
+        const std::string dir = dirName(lines.empty() ? near : lines.front());
         FileBrowserOptions opts;
         opts.title = title;
         if (!dir.empty())
@@ -379,24 +435,82 @@ private:
         openFileBrowser(opts);
     }
 
-    void loadPatches(const std::string& path, const std::string& text)
+    void loadPatches(const std::string& path, const std::string& firstText)
     {
+        std::string text = firstText;
+        std::string paths = path;
         uze::PatchBank bank = uze::parsePatchFile(text);
         if (bank.patches.empty())
         {
             fStatus = "No Uzebox patches found in " + baseName(path);
             return;
         }
+
+        // PCM samples often live in another .inc next to the patch file
+        if (!bank.missingSamples.empty())
+        {
+            for (const std::string& f : uze::findSampleFiles(path, bank.missingSamples))
+            {
+                std::string more;
+                if (uze::readTextFile(f, more))
+                {
+                    text += "\n" + more;
+                    paths += "\n" + f;
+                }
+            }
+            bank = uze::parsePatchFile(text);
+        }
+        commitPatchText(text, paths, bank);
+    }
+
+    void addFile(const std::string& path, const std::string& more)
+    {
+        const std::string text = fFileText + "\n" + more;
+        uze::PatchBank bank = uze::parsePatchFile(text);
+        if (bank.patches.empty())
+        {
+            fStatus = "No Uzebox patches found";
+            return;
+        }
+        commitPatchText(text, fFilePath + "\n" + path, bank);
+    }
+
+    void commitPatchText(const std::string& text, const std::string& paths, const uze::PatchBank& bank)
+    {
         fBank = bank;
-        fFilePath = path;
-        fStatus.clear();
+        fFileText = text;
+        fFilePath = paths;
+        fStatus = missingSamplesMessage();
         // keep the same patch name selected if the new file has it
         if (fBank.indexOf(fPatchName) < 0)
             fPatchName = fBank.patches.front().name;
 
-        setState(UZESYNTH_STATE_FILE_TEXT, text.c_str());
+        setState(UZESYNTH_STATE_FILE_TEXT, fFileText.c_str());
         setState(UZESYNTH_STATE_FILE_NAME, fFilePath.c_str());
         setState(UZESYNTH_STATE_PATCH_NAME, fPatchName.c_str());
+    }
+
+    std::string missingSamplesMessage() const
+    {
+        if (fBank.missingSamples.empty())
+            return std::string();
+        std::string s = "Sample data not found: " + fBank.missingSamples.front();
+        if (fBank.missingSamples.size() > 1)
+            s += " (+" + std::to_string(fBank.missingSamples.size() - 1) + ")";
+        return s + "  -  use + File";
+    }
+
+    std::string filesLabel() const
+    {
+        const std::vector<std::string> files = splitLines(fFilePath);
+        if (files.empty())
+            return std::string();
+        std::string s = baseName(files.front());
+        for (size_t i = 1; i < files.size() && i < 3; ++i)
+            s += " + " + baseName(files[i]);
+        if (files.size() > 3)
+            s += " + " + std::to_string(files.size() - 3) + " more";
+        return s;
     }
 
     void loadWavetable(const std::string& path, const std::string& contents)
@@ -451,6 +565,8 @@ private:
     static std::string patchLabel(const uze::Patch& p)
     {
         std::string s = p.name;
+        if (p.data.type == uze::PatchType::Pcm)
+            s += p.sampleMissing ? "  [PCM, sample missing]" : "  [PCM]";
         if (!p.comment.empty())
             s += "  -  " + p.comment;
         return s;
@@ -462,16 +578,24 @@ private:
             return patchLabel(fBank.patches[static_cast<size_t>(row)]);
         const int i = fBank.table[static_cast<size_t>(row)];
         if (i < 0)
-            return "(PCM - not supported)";
+            return "(empty)";
         return patchLabel(fBank.patches[static_cast<size_t>(i)]);
     }
 
-    bool rowIsNoise(int row) const
+    Color rowColor(int row) const
     {
         if (fMode == 1)
-            return true; // drum kit always uses the noise channel
+            return Color(140, 200, 255); // drum kit: always the noise channel
         const int i = fMode == 0 ? row : fBank.table[static_cast<size_t>(row)];
-        return i >= 0 && fBank.patches[static_cast<size_t>(i)].data.type == uze::PatchType::Noise;
+        if (i < 0)
+            return Color(120, 126, 140);
+        const uze::Patch& p = fBank.patches[static_cast<size_t>(i)];
+        switch (p.data.type)
+        {
+        case uze::PatchType::Noise: return Color(140, 200, 255);
+        case uze::PatchType::Pcm:   return p.sampleMissing ? Color(255, 140, 120) : Color(150, 230, 160);
+        default:                    return Color(230, 233, 240);
+        }
     }
 
     // ---- drawing helpers -----------------------------------------------------
@@ -532,19 +656,35 @@ private:
 
     void drawModeSwitch()
     {
-        const Box& b = kModeBox;
-        const float sw = b.w / 3;
-        fontSize(13.0f);
+        drawSegments(kModeBox, kModeNames, 3, fMode, 13.0f);
+    }
+
+    void drawSegments(const Box& b, const char* const* names, int count, int selected, float size)
+    {
+        const float sw = b.w / count;
+        fontSize(size);
         textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < count; ++i)
         {
             beginPath();
             roundedRect(b.x + i * sw + 1, b.y, sw - 2, b.h, 5);
-            fillColor(i == fMode ? Color(255, 200, 60) : Color(44, 48, 62));
+            fillColor(i == selected ? Color(255, 200, 60) : Color(44, 48, 62));
             fill();
-            fillColor(i == fMode ? Color(24, 26, 32) : Color(200, 204, 214));
-            text(b.x + i * sw + sw / 2, b.y + b.h / 2, kModeNames[i], nullptr);
+            fillColor(i == selected ? Color(24, 26, 32) : Color(200, 204, 214));
+            text(b.x + i * sw + sw / 2, b.y + b.h / 2, names[i], nullptr);
         }
+    }
+
+    void drawSmallButton(const Box& b, const char* label, bool hover)
+    {
+        beginPath();
+        roundedRect(b.x, b.y, b.w, b.h, 4);
+        fillColor(hover ? Color(70, 76, 96) : Color(44, 48, 62));
+        fill();
+        fontSize(12.0f);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        fillColor(Color(200, 204, 214));
+        text(b.x + b.w / 2, b.y + b.h / 2, label, nullptr);
     }
 
     void drawCombo()
@@ -624,7 +764,7 @@ private:
                 fillColor(i == current ? Color(255, 200, 60, 0.25f) : Color(255, 255, 255, 0.08f));
                 fill();
             }
-            fillColor(rowIsNoise(i) ? Color(140, 200, 255) : Color(230, 233, 240));
+            fillColor(rowColor(i));
             if (fMode == 0)
             {
                 text(b.x + 10, ry + kRowH / 2, rowLabel(i).c_str(), nullptr);
@@ -638,7 +778,7 @@ private:
                 textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
                 fillColor(Color(150, 156, 170));
                 text(b.x + 42, ry + kRowH / 2, noteName(i).c_str(), nullptr);
-                fillColor(rowIsNoise(i) ? Color(140, 200, 255) : Color(230, 233, 240));
+                fillColor(rowColor(i));
                 text(b.x + 84, ry + kRowH / 2, rowLabel(i).c_str(), nullptr);
             }
         }

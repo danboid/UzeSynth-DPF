@@ -50,7 +50,12 @@ enum class PatchType : uint8_t { Wave = 0, Noise = 1, Pcm = 2 };
 // <delta>,<cmd>,<param>, <delta>,<cmd>,<param>, ... <delta>,PATCH_END
 struct PatchData {
     PatchType type = PatchType::Wave;
-    std::vector<uint8_t> stream;
+    std::vector<uint8_t> stream;   // may be empty (cmdStream == NULL)
+
+    // PCM patches (PatchStruct pcmData / loopStart / loopEnd)
+    std::vector<uint8_t> sample;   // signed 8-bit; empty if the array wasn't found
+    int32_t loopStart = 0;         // byte offsets into 'sample'
+    int32_t loopEnd = 0;
 };
 
 class UzeboxVoice {
@@ -61,7 +66,14 @@ public:
     void reset();
 
     // Which kind of mixer channel the track drives
-    enum class Channel { Wave, Noise };
+    enum class Channel { Wave, Noise, Pcm };
+
+    // Kernel mixer build option (SOUND_MIXER). They differ in the noise
+    // channel's output and in how the PCM channel loops:
+    //  Vsync  - MIXER_TYPE_VSYNC (default); PCM when built with MIXER_CHAN4_TYPE=1
+    //  Inline - MIXER_TYPE_INLINE; PCM is the 5th channel (SOUND_CHANNEL_5_ENABLE)
+    enum class Mixer { Vsync, Inline };
+    void setMixer(Mixer m) { mixer = m; }
 
     // TriggerNote(channel, patch, note, volume) with volume != 0.
     // On the noise channel (channel 3 / MIDI channel 4) the kernel uses the
@@ -131,9 +143,11 @@ private:
     int      streamPos;            // -1 == NULL
 
     const Wavetable* waves = nullptr;
+    Mixer mixer = Mixer::Vsync;
 
     // ----- mixer channel -----
     bool     noise;                // channel 4 (LFSR) instead of a wave channel
+    bool     pcm;                  // PCM channel
     uint8_t  volume;               // tr*_vol, written once per frame
     // wave channel
     uint16_t step;                 // step_hi:step_lo
@@ -143,6 +157,13 @@ private:
     uint8_t  noiseParams;
     uint16_t barrel;
     uint8_t  divider;
+    // PCM channel: position as an offset from the sample start (the kernel keeps
+    // an absolute flash address), 8-bit fraction, loop length and loop end.
+    int32_t  pcmPos;
+    uint8_t  pcmFrac;
+    int32_t  pcmLoopLen;
+    int32_t  pcmLoopEnd;
+    int32_t  pcmLoopTarget;        // VSYNC mixer: computed once per frame
 
     int samplesUntilFrame;
 };

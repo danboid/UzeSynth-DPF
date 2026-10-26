@@ -11,6 +11,11 @@
  *   --waves FILE   custom wavetable (MIXER_WAVES .inc, C array or raw binary)
  *   --drum         drum kit mode: PATCH is a patch number, played on the noise channel
  *   --fx           sound FX mode: PATCH is a patch number, played like TriggerFx()
+ *   --inline       emulate the inline mixer (SOUND_MIXER=1) instead of the VSYNC mixer
+ *   --add FILE     also read FILE (e.g. PCM sample data kept in a separate .inc)
+ *
+ * PCM sample arrays the patch table needs are also searched for automatically
+ * in .inc/.h files next to the patch file.
  *
  * This file is part of UzeSynth, licensed under the GNU GPL v3 or later.
  */
@@ -28,7 +33,7 @@ static void put16(std::vector<uint8_t>& v, uint16_t x) { v.push_back(uint8_t(x))
 static void usage(const char* argv0)
 {
     std::fprintf(stderr,
-                 "usage: %s [--waves FILE] [--drum|--fx] file.inc [patch out.wav [note=60] [hold_seconds=1] [velocity=127]]\n",
+                 "usage: %s [--waves FILE] [--drum|--fx] [--inline] [--add FILE]... file.inc [patch out.wav [note=60] [hold_seconds=1] [velocity=127]]\n",
                  argv0);
 }
 
@@ -36,6 +41,8 @@ int main(int argc, char** argv)
 {
     std::vector<std::string> args;
     std::string wavesFile;
+    std::vector<std::string> extraFiles;
+    bool inlineMixer = false;
     uze::UzeboxSynth::PlayMode mode = uze::UzeboxSynth::PlayMode::Melodic;
     for (int i = 1; i < argc; ++i)
     {
@@ -43,6 +50,8 @@ int main(int argc, char** argv)
         if (a == "--waves" && i + 1 < argc) wavesFile = argv[++i];
         else if (a == "--drum") mode = uze::UzeboxSynth::PlayMode::DrumKit;
         else if (a == "--fx") mode = uze::UzeboxSynth::PlayMode::SoundFx;
+        else if (a == "--inline") inlineMixer = true;
+        else if (a == "--add" && i + 1 < argc) extraFiles.push_back(argv[++i]);
         else if (a.size() > 1 && a[0] == '-' && a[1] == '-') { usage(argv[0]); return 1; }
         else args.push_back(a);
     }
@@ -60,7 +69,32 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "cannot read %s\n", args[0].c_str());
         return 1;
     }
+    for (const std::string& f : extraFiles)
+    {
+        std::string more;
+        if (!uze::readTextFile(f, more))
+        {
+            std::fprintf(stderr, "cannot read %s\n", f.c_str());
+            return 1;
+        }
+        text += "\n" + more;
+    }
     data.bank = uze::parsePatchFile(text);
+    if (!data.bank.missingSamples.empty())
+    {
+        for (const std::string& f : uze::findSampleFiles(args[0], data.bank.missingSamples))
+        {
+            std::string more;
+            if (uze::readTextFile(f, more))
+            {
+                std::fprintf(stderr, "found sample data in %s\n", f.c_str());
+                text += "\n" + more;
+            }
+        }
+        data.bank = uze::parsePatchFile(text);
+        for (const std::string& m : data.bank.missingSamples)
+            std::fprintf(stderr, "warning: PCM sample %s not found (use --add FILE)\n", m.c_str());
+    }
     if (!data.bank.error.empty())
     {
         std::fprintf(stderr, "%s\n", data.bank.error.c_str());
@@ -89,9 +123,15 @@ int main(int argc, char** argv)
             const int i = bank.table[n];
             if (i < 0) { std::printf("%3zu  (PCM / unsupported)\n", n); continue; }
             const uze::Patch& p = bank.patches[static_cast<size_t>(i)];
-            std::printf("%3zu  %-24s %-5s %3zu bytes  %s\n", n, p.name.c_str(),
-                        p.data.type == uze::PatchType::Noise ? "noise" : "wave",
+            const char* type = p.data.type == uze::PatchType::Noise ? "noise"
+                             : p.data.type == uze::PatchType::Pcm ? "pcm" : "wave";
+            std::printf("%3zu  %-24s %-5s %3zu bytes  %s", n, p.name.c_str(), type,
                         p.data.stream.size(), p.comment.c_str());
+            if (p.data.type == uze::PatchType::Pcm)
+                std::printf("%s[sample %zu bytes, loop %d-%d%s]", p.comment.empty() ? "" : "  ",
+                            p.data.sample.size(), p.data.loopStart, p.data.loopEnd,
+                            p.sampleMissing ? ", MISSING" : "");
+            std::printf("\n");
         }
         for (size_t i = 0; i < bank.patches.size(); ++i)
         {
@@ -129,6 +169,7 @@ int main(int argc, char** argv)
     uze::UzeboxSynth synth;
     synth.setSoundData(&data);
     synth.setPlayMode(mode);
+    synth.setMixer(inlineMixer ? uze::UzeboxVoice::Mixer::Inline : uze::UzeboxVoice::Mixer::Vsync);
     synth.setPatchIndex(index);
     if (mode != uze::UzeboxSynth::PlayMode::Melodic)
     {

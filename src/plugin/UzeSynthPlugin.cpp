@@ -25,6 +25,7 @@ public:
         fParams[kParamMasterVolume] = static_cast<float>(uze::kDefaultMasterVolume);
         fParams[kParamOutputMode]   = 1.0f;
         fParams[kParamPlayMode]     = 0.0f;
+        fParams[kParamMixer]        = 0.0f;
         applyParams();
         sampleRateChanged(getSampleRate());
     }
@@ -45,7 +46,7 @@ protected:
     const char* getMaker() const override       { return "Uzebox community"; }
     const char* getHomePage() const override    { return "https://uzebox.org"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t getVersion() const override        { return d_version(0, 2, 0); }
+    uint32_t getVersion() const override        { return d_version(0, 3, 0); }
 
     // ------------------------------------------------------------------------
     // Init
@@ -111,6 +112,25 @@ protected:
             v[2].label = "Sound FX";
             v[2].value = 2.0f;
             p.enumValues.count = 3;
+            p.enumValues.restrictedMode = true;
+            p.enumValues.values = v;
+            break;
+        }
+        case kParamMixer:
+        {
+            p.name = "Kernel Mixer";
+            p.symbol = "kernel_mixer";
+            p.description = "VSYNC: default kernel mixer (PCM games built with MIXER_CHAN4_TYPE=1). "
+                            "Inline: SOUND_MIXER=1 (PCM on the 5th channel).";
+            p.ranges.min = 0.0f;
+            p.ranges.max = 1.0f;
+            p.ranges.def = 0.0f;
+            ParameterEnumerationValue* const v = new ParameterEnumerationValue[2];
+            v[0].label = "VSYNC";
+            v[0].value = 0.0f;
+            v[1].label = "Inline";
+            v[1].value = 1.0f;
+            p.enumValues.count = 2;
             p.enumValues.restrictedMode = true;
             p.enumValues.values = v;
             break;
@@ -296,6 +316,8 @@ private:
         int mode = static_cast<int>(fParams[kParamPlayMode] + 0.5f);
         mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
         fSynth.setPlayMode(static_cast<uze::UzeboxSynth::PlayMode>(mode));
+        fSynth.setMixer(fParams[kParamMixer] >= 0.5f ? uze::UzeboxVoice::Mixer::Inline
+                                                     : uze::UzeboxVoice::Mixer::Vsync);
     }
 
     // Never blocks the audio thread: if the host/UI is busy changing state we

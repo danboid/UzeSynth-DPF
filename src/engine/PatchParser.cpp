@@ -4,10 +4,13 @@
  */
 #include "PatchParser.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <set>
+#include <system_error>
 
 namespace uze {
 
@@ -268,8 +271,9 @@ bool isTypeName(const std::string& s)
 
 class ExprEval {
 public:
-    ExprEval(const std::vector<Token>& toks, const std::map<std::string, std::vector<Token>>& defs, int nesting)
-        : t(toks), defines(defs), depth(nesting) {}
+    ExprEval(const std::vector<Token>& toks, const std::map<std::string, std::vector<Token>>& defs, int nesting,
+             const std::map<std::string, size_t>* arraySizes = nullptr)
+        : t(toks), defines(defs), depth(nesting), sizes(arraySizes) {}
 
     bool evaluate(long& out)
     {
@@ -285,6 +289,7 @@ private:
     const std::vector<Token>& t;
     const std::map<std::string, std::vector<Token>>& defines;
     int depth;
+    const std::map<std::string, size_t>* sizes;
     size_t p = 0;
     bool ok = true;
 
@@ -383,13 +388,34 @@ private:
         const Token& k = t[p++];
         if (k.kind == Tok::Number)
             return k.value;
+        if (k.kind == Tok::Ident && k.text == "sizeof")
+        {
+            // sizeof(array) or sizeof array, for arrays of bytes
+            const bool paren = peek("(");
+            if (paren) ++p;
+            long v = 0;
+            if (p < t.size() && t[p].kind == Tok::Ident)
+            {
+                const std::string& n = t[p++].text;
+                if (n == "char" || n == "u8" || n == "s8" || n == "int8_t" || n == "uint8_t") v = 1;
+                else if (sizes != nullptr && sizes->count(n)) v = static_cast<long>(sizes->at(n));
+                else ok = false;
+            }
+            else ok = false;
+            if (paren)
+            {
+                if (!peek(")")) { ok = false; return 0; }
+                ++p;
+            }
+            return v;
+        }
         if (k.kind == Tok::Ident)
         {
             const auto& b = builtinSymbols();
             auto d = defines.find(k.text);
             if (d != defines.end())
             {
-                ExprEval sub(d->second, defines, depth + 1);
+                ExprEval sub(d->second, defines, depth + 1, sizes);
                 long v = 0;
                 if (sub.evaluate(v)) return v;
             }
@@ -414,9 +440,7 @@ struct ByteArray {
 };
 
 struct StructEntry {
-    long type = 0;
-    std::vector<std::string> pcmIdents;
-    std::vector<std::string> cmdIdents;
+    std::vector<std::vector<Token>> fields; // type, pcmData, cmdStream, loopStart, loopEnd
 };
 
 // split tokens [begin,end) at top-level commas
@@ -484,6 +508,7 @@ std::string firstLine(const std::string& s)
 }
 
 struct Scan {
+    std::map<std::string, std::vector<Token>> defines;
     std::vector<ByteArray> arrays;
     std::map<std::string, size_t> arrayIndex;
     std::vector<std::vector<StructEntry>> structs;   // one entry list per PatchStruct array
@@ -492,7 +517,7 @@ struct Scan {
 Scan scanDeclarations(const std::string& text)
 {
     Scan scan;
-    std::map<std::string, std::vector<Token>> defines;
+    std::map<std::string, std::vector<Token>>& defines = scan.defines;
     const std::vector<Token> all = lex(text, true, &defines);
 
     // Separate comments, remembering the comment that directly precedes each token
@@ -563,16 +588,7 @@ Scan scanDeclarations(const std::string& text)
                     if (item.size() >= 2 && item.front().text == "{")
                     {
                         const std::vector<Token> inner(item.begin() + 1, item.end() - 1);
-                        const auto fields = splitTopLevel(inner, 0, inner.size());
-                        if (fields.size() >= 3)
-                        {
-                            ExprEval ev(fields[0], defines, 0);
-                            if (!ev.evaluate(e.type)) e.type = 0;
-                            for (const Token& f : fields[1])
-                                if (f.kind == Tok::Ident) e.pcmIdents.push_back(f.text);
-                            for (const Token& f : fields[2])
-                                if (f.kind == Tok::Ident) e.cmdIdents.push_back(f.text);
-                        }
+                        e.fields = splitTopLevel(inner, 0, inner.size());
                     }
                     entries.push_back(e); // keep position even if malformed: indices matter
                 }
@@ -629,44 +645,116 @@ PatchBank parsePatchFile(const std::string& text)
     PatchBank bank;
     const Scan scan = scanDeclarations(text);
 
-    // Patch list: first in PatchStruct order, then any other well-formed
-    // command streams in file order.
-    std::set<std::string> pcmData;
-    std::map<std::string, int> listIndex;
-    auto addPatch = [&](const ByteArray& a, PatchType type) -> int {
-        auto it = listIndex.find(a.name);
-        if (it != listIndex.end())
-            return it->second;
-        Patch p;
-        p.name = a.name;
-        p.comment = a.comment;
-        p.data.type = type;
-        p.data.stream = a.bytes;
-        bank.patches.push_back(p);
-        const int idx = static_cast<int>(bank.patches.size()) - 1;
-        listIndex[a.name] = idx;
-        return idx;
+    std::map<std::string, size_t> sizes;
+    for (const ByteArray& a : scan.arrays)
+        sizes[a.name] = a.bytes.size();
+
+    auto evaluate = [&](const std::vector<Token>& f, long fallback) -> long {
+        long v = 0;
+        ExprEval ev(f, scan.defines, 0, &sizes);
+        return ev.evaluate(v) ? v : fallback;
     };
+    // the array named by a pointer field: name, &name[0], (const char*)name, NULL
+    auto identOf = [](const std::vector<Token>& f) -> std::string {
+        for (const Token& k : f)
+            if (k.kind == Tok::Ident && k.text != "NULL" && !isTypeName(k.text) && k.text != "PROGMEM")
+                return k.text;
+        return std::string();
+    };
+    auto findArray = [&](const std::string& name) -> const ByteArray* {
+        auto it = scan.arrayIndex.find(name);
+        return it == scan.arrayIndex.end() ? nullptr : &scan.arrays[it->second];
+    };
+
+    std::set<std::string> referencedSamples, usedArrays, missing;
+    std::map<std::string, int> listIndex; // dedup key -> index in bank.patches
+    auto nameTaken = [&](const std::string& n) { return bank.indexOf(n) >= 0; };
 
     for (const auto& entries : scan.structs)
         for (const StructEntry& e : entries)
-            for (const std::string& id : e.pcmIdents)
-                pcmData.insert(id);
+            if (e.fields.size() >= 2)
+            {
+                const std::string id = identOf(e.fields[1]);
+                if (!id.empty()) referencedSamples.insert(id);
+            }
 
     for (size_t s = 0; s < scan.structs.size(); ++s)
     {
         for (const StructEntry& e : scan.structs[s])
         {
             int idx = -1;
-            // PCM patches need sample playback (not supported yet)
-            if (e.type != static_cast<long>(PatchType::Pcm))
+            if (e.fields.size() >= 3)
             {
-                for (const std::string& id : e.cmdIdents)
+                const long type = evaluate(e.fields[0], 0);
+                const std::string pcmId = identOf(e.fields[1]);
+                const std::string cmdId = identOf(e.fields[2]);
+                const ByteArray* cmd = cmdId.empty() ? nullptr : findArray(cmdId);
+                if (cmd != nullptr)
+                    usedArrays.insert(cmdId);
+
+                // Type 2 is PCM. Games built with MIXER_CHAN4_TYPE=1 (PCM instead of noise)
+                // also use type 1 with sample data, e.g. Atomix.
+                const bool isPcm = type == 2 || (type == 1 && !pcmId.empty());
+
+                if (isPcm)
                 {
-                    auto it = scan.arrayIndex.find(id);
-                    if (it == scan.arrayIndex.end()) continue;
-                    idx = addPatch(scan.arrays[it->second], e.type == 1 ? PatchType::Noise : PatchType::Wave);
-                    break;
+                    const long loopStart = e.fields.size() > 3 ? evaluate(e.fields[3], 0) : 0;
+                    const long loopEnd   = e.fields.size() > 4 ? evaluate(e.fields[4], 0) : 0;
+                    const std::string key = "pcm:" + pcmId + "|" + cmdId + "|" + std::to_string(loopStart)
+                                          + "|" + std::to_string(loopEnd);
+                    auto it = listIndex.find(key);
+                    if (it != listIndex.end())
+                    {
+                        idx = it->second;
+                    }
+                    else
+                    {
+                        const ByteArray* sample = pcmId.empty() ? nullptr : findArray(pcmId);
+                        Patch p;
+                        p.name = !pcmId.empty() ? pcmId : (!cmdId.empty() ? cmdId : "pcm_patch");
+                        if (nameTaken(p.name) && !cmdId.empty()) p.name += "/" + cmdId;
+                        for (int n = 2; nameTaken(p.name); ++n)
+                            p.name = (pcmId.empty() ? cmdId : pcmId) + "#" + std::to_string(n);
+                        p.comment = (cmd != nullptr && !cmd->comment.empty()) ? cmd->comment
+                                  : (sample != nullptr ? sample->comment : std::string());
+                        p.sampleName = pcmId;
+                        p.data.type = PatchType::Pcm;
+                        if (cmd != nullptr) p.data.stream = cmd->bytes;
+                        p.data.loopStart = static_cast<int32_t>(loopStart);
+                        p.data.loopEnd = static_cast<int32_t>(loopEnd);
+                        if (sample != nullptr)
+                        {
+                            p.data.sample = sample->bytes;
+                            usedArrays.insert(pcmId);
+                        }
+                        else
+                        {
+                            p.sampleMissing = true;
+                            if (!pcmId.empty()) missing.insert(pcmId);
+                        }
+                        bank.patches.push_back(p);
+                        idx = static_cast<int>(bank.patches.size()) - 1;
+                        listIndex[key] = idx;
+                    }
+                }
+                else if (cmd != nullptr)
+                {
+                    auto it = listIndex.find(cmdId);
+                    if (it != listIndex.end())
+                    {
+                        idx = it->second;
+                    }
+                    else
+                    {
+                        Patch p;
+                        p.name = cmd->name;
+                        p.comment = cmd->comment;
+                        p.data.type = type == 1 ? PatchType::Noise : PatchType::Wave;
+                        p.data.stream = cmd->bytes;
+                        bank.patches.push_back(p);
+                        idx = static_cast<int>(bank.patches.size()) - 1;
+                        listIndex[cmdId] = idx;
+                    }
                 }
             }
             // The first PatchStruct array is the kernel's patch table
@@ -676,10 +764,17 @@ PatchBank parsePatchFile(const std::string& text)
         }
     }
 
+    // Other well-formed command streams that no table references
     for (const ByteArray& a : scan.arrays)
     {
-        if (listIndex.count(a.name) || pcmData.count(a.name) || !a.valid) continue;
-        addPatch(a, a.hasNoise ? PatchType::Noise : PatchType::Wave);
+        if (usedArrays.count(a.name) || referencedSamples.count(a.name) || !a.valid || nameTaken(a.name))
+            continue;
+        Patch p;
+        p.name = a.name;
+        p.comment = a.comment;
+        p.data.type = a.hasNoise ? PatchType::Noise : PatchType::Wave;
+        p.data.stream = a.bytes;
+        bank.patches.push_back(p);
     }
 
     // No PatchStruct table: patch numbers follow file order.
@@ -687,6 +782,7 @@ PatchBank parsePatchFile(const std::string& text)
         for (size_t i = 0; i < bank.patches.size(); ++i)
             bank.table.push_back(static_cast<int>(i));
 
+    bank.missingSamples.assign(missing.begin(), missing.end());
     if (bank.patches.empty())
         bank.error = "No Uzebox patches found in file";
     return bank;
@@ -698,6 +794,80 @@ std::vector<std::vector<uint8_t>> parseCByteArrays(const std::string& text)
     for (const ByteArray& a : scanDeclarations(text).arrays)
         out.push_back(a.bytes);
     return out;
+}
+
+namespace {
+
+// true if 'text' declares an array called 'name' ("name[" with optional spaces)
+bool declaresArray(const std::string& text, const std::string& name)
+{
+    size_t pos = 0;
+    while ((pos = text.find(name, pos)) != std::string::npos)
+    {
+        const bool startOk = pos == 0 || !isIdentChar(text[pos - 1]);
+        size_t q = pos + name.size();
+        while (q < text.size() && (text[q] == ' ' || text[q] == '\t')) ++q;
+        if (startOk && q < text.size() && text[q] == '[')
+            return true;
+        pos += name.size();
+    }
+    return false;
+}
+
+} // namespace
+
+std::vector<std::string> findSampleFiles(const std::string& patchPath, const std::vector<std::string>& missing)
+{
+    namespace fs = std::filesystem;
+    std::vector<std::string> found;
+    if (missing.empty())
+        return found;
+
+    std::error_code ec;
+    fs::path self = fs::absolute(fs::path(patchPath), ec);
+    if (ec) self = fs::path(patchPath);
+    const fs::path dir = self.parent_path();
+    std::vector<fs::path> dirs = { dir, dir / "data", dir.parent_path(), dir.parent_path() / "data" };
+
+    std::set<std::string> want(missing.begin(), missing.end());
+    std::set<std::string> seen;
+    for (const fs::path& d : dirs)
+    {
+        if (want.empty()) break;
+        if (d.empty() || !fs::is_directory(d, ec)) continue;
+
+        std::vector<fs::path> files;
+        for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        {
+            const fs::path f = it->path();
+            std::string ext = f.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if ((ext == ".inc" || ext == ".h") && it->is_regular_file(ec) && it->file_size(ec) < 4u * 1024u * 1024u)
+                files.push_back(f);
+            if (files.size() > 200) break;
+        }
+        std::sort(files.begin(), files.end());
+
+        for (const fs::path& f : files)
+        {
+            if (want.empty()) break;
+            const std::string canon = fs::weakly_canonical(f, ec).string();
+            if (seen.count(canon) || fs::equivalent(f, self, ec)) continue;
+            seen.insert(canon);
+
+            std::string text;
+            if (!readTextFile(f.string(), text)) continue;
+            bool useful = false;
+            for (auto it = want.begin(); it != want.end();)
+            {
+                if (declaresArray(text, *it)) { useful = true; it = want.erase(it); }
+                else ++it;
+            }
+            if (useful)
+                found.push_back(f.string());
+        }
+    }
+    return found;
 }
 
 bool readTextFile(const std::string& path, std::string& out, size_t maxBytes)
