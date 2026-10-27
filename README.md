@@ -94,26 +94,6 @@ same commands as on Linux. This also builds an Audio Unit (`uzesynth.component`)
 plugins are unsigned, so after copying them into place, clear macOS's quarantine flag, e.g.
 `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/uzesynth.clap`.
 
-### Automatic builds
-
-Every push to GitHub builds and tests all three platforms (`.github/workflows/build.yml`).
-The built plugins can be downloaded from each run's page under **Artifacts**. Commits that
-only change `.md` files don't start a build.
-
-### Publishing a release
-
-Push a tag whose name starts with `v`:
-
-```sh
-git tag -a v0.4.0 -m "UzeSynth 0.4.0"
-git push origin v0.4.0
-```
-
-The workflow then builds and tests all three platforms and, if they all succeed, creates a
-GitHub release named after the tag, with `uzesynth-0.4.0-Linux.zip`, `-macOS.zip` and
-`-Windows.zip` attached and release notes listing the changes since the previous release.
-You can edit the release text on GitHub afterwards.
-
 ## Using it
 
 1. Click the **folder** icon and load a patch file, for example a game's `patches.inc`.
@@ -265,11 +245,6 @@ Deliberate differences from a real console:
 - In poly mode each voice is a complete track with its own channel, so you can have more
   than one noise or PCM sound at once, which the console can't.
 - The real console's PWM audio output and board filter are not modelled.
-
-## Roadmap
-
-- A patch editor in the UI
-- Verification against cuzebox recordings across all demo patch files
 
 ## License
 
