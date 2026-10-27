@@ -3,7 +3,6 @@
  * This file is part of UzeSynth, licensed under the GNU GPL v3 or later.
  */
 #include "DistrhoPlugin.hpp"
-#include "extra/Mutex.hpp"
 
 #include "../engine/PatchParser.hpp"
 #include "../engine/UzeboxSynth.hpp"
@@ -11,6 +10,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 START_NAMESPACE_DISTRHO
@@ -174,7 +174,7 @@ protected:
 
     String getState(const char* key) const override
     {
-        const MutexLocker ml(fStateMutex);
+        const std::lock_guard<std::mutex> lock(fStateMutex);
         if (std::strcmp(key, UZESYNTH_STATE_FILE_TEXT) == 0)  return String(fFileText.c_str());
         if (std::strcmp(key, UZESYNTH_STATE_FILE_NAME) == 0)  return String(fFileName.c_str());
         if (std::strcmp(key, UZESYNTH_STATE_PATCH_NAME) == 0) return String(fPatchName.c_str());
@@ -189,7 +189,7 @@ protected:
         if (value == nullptr)
             value = "";
 
-        const MutexLocker ml(fStateMutex);
+        const std::lock_guard<std::mutex> lock(fStateMutex);
 
         // free sound data the audio thread has finished with
         delete fRetired;
@@ -288,7 +288,7 @@ private:
     float fParams[kParamCount];
 
     // Non-realtime side (guarded by fStateMutex)
-    Mutex fStateMutex;
+    mutable std::mutex fStateMutex; // DPF's Mutex is not implemented for MSVC
     std::string fFileText, fFileName, fPatchName, fWavesHex, fWavesName, fModified;
     uze::PatchBank fBank;
     uze::Wavetable fWaves = uze::defaultWavetable();
@@ -330,7 +330,7 @@ private:
     // simply pick the change up on the next block.
     void pickUpPendingState()
     {
-        if (!fStateMutex.tryLock())
+        if (!fStateMutex.try_lock())
             return;
 
         if (fPending.data != nullptr && fRetired == nullptr)

@@ -71,12 +71,34 @@ cp    build/bin/uzesynth-vst2.so ~/.vst/
 
 `build/bin/uzesynth` is a JACK standalone version.
 
-### Windows and macOS
+### Windows
 
-Windows and macOS use the same commands: Visual Studio or MinGW on Windows, Xcode command
-line tools on macOS. They have not been tested yet. `.github/workflows/build.yml` builds all
-three platforms on GitHub Actions, so pushing the repo to GitHub is the quickest way to find
-out what needs fixing.
+Windows builds use **MinGW-w64**, not Visual Studio: DPF's OpenGL user interface needs the
+`GL/glext.h` header, which Microsoft's compiler doesn't include. The easiest way is to
+cross-compile from Linux, which is what the GitHub Actions build does:
+
+```sh
+sudo apt install mingw-w64 wine64
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win -j
+```
+
+Wine is only used during the build, to run the LV2 generator and the tests. Without it,
+everything except the LV2 version still builds. The resulting plugins only need standard
+Windows DLLs. On Windows itself, MSYS2's MinGW-w64 environment should also work.
+
+### macOS
+
+Install the Xcode command line tools (`xcode-select --install`) and CMake, then use the
+same commands as on Linux. This also builds an Audio Unit (`uzesynth.component`). The
+plugins are unsigned, so after copying them into place, clear macOS's quarantine flag, e.g.
+`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/uzesynth.clap`.
+
+### Automatic builds
+
+Every push to GitHub builds and tests all three platforms (`.github/workflows/build.yml`).
+The built plugins can be downloaded from each run's page under **Artifacts**. Commits that
+only change `.md` files don't start a build.
 
 ## Using it
 

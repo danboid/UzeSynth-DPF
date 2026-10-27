@@ -17,6 +17,12 @@ set(UZESYNTH_TARGETS vst2 vst3 clap lv2 jack)
 if(APPLE)
   list(APPEND UZESYNTH_TARGETS au)
 endif()
+# LV2 needs to run a generator program on the built plugin, which isn't
+# possible when cross-compiling unless an emulator (e.g. Wine) is configured
+if(CMAKE_CROSSCOMPILING AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
+  message(WARNING "Cross-compiling without an emulator (e.g. Wine): skipping the LV2 build")
+  list(REMOVE_ITEM UZESYNTH_TARGETS lv2)
+endif()
 
 set(UZESYNTH_ENGINE
   src/engine/PatchEdit.cpp
