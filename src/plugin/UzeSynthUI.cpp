@@ -222,8 +222,8 @@ protected:
         else if (fMode == 0)
             gui::label(*this, kPad, 248, patchInfo(), gui::colour::dim(), 12);
         else
-            gui::label(*this, kPad, 248, fMode == 1 ? "MIDI note n plays patch n on the noise channel (song channel 4)"
-                                                    : "MIDI note n triggers patch n as a sound effect (TriggerFx)",
+            gui::label(*this, kPad, 248, fMode == 1 ? "MIDI note n plays patch n on the noise channel. Click a patch to hear it."
+                                                    : "MIDI note n triggers patch n (TriggerFx). Click a patch to hear it.",
                        gui::colour::dim(), 12);
 
         gui::label(*this, kPad, kMixerBox.cy(), "Kernel mixer", gui::colour::dim(), 12);
@@ -280,8 +280,21 @@ protected:
             const int row = fList.rowAt(x, y, count);
             if (row >= 0 && fMode == 0)
                 selectPatch(row);
+            else if (row >= 0)
+            {
+                // Drum kit / Sound FX: the row is a patch number (= MIDI note).
+                // Select that patch and play it while the button is held.
+                const int p = fBank.table[static_cast<size_t>(row)];
+                if (p >= 0)
+                {
+                    fTableRow = row;
+                    selectPatch(p);
+                    fKeyDown = row;
+                    sendNote(0, static_cast<uint8_t>(row), 100);
+                }
+            }
             if (row >= 0 || !fList.area.contains(x, y))
-                fListOpen = false; // rows choose (or just close, in drum/FX view); outside closes
+                fListOpen = false; // a row was chosen, or clicked outside
             repaint();
             return true;
         }
@@ -337,12 +350,12 @@ protected:
         if (kComboBox.contains(x, y) && listCount() > 0)
         {
             fListOpen = true;
-            fList.centre(fMode == 0 ? std::max(0, fBank.indexOf(fPatchName)) : 0, listCount());
+            fList.centre(fMode == 0 ? std::max(0, fBank.indexOf(fPatchName)) : std::max(0, currentTableRow()), listCount());
             repaint();
             return true;
         }
-        if (kOctDown.contains(x, y) && fOctave > 0) { --fOctave; repaint(); return true; }
-        if (kOctUp.contains(x, y) && fOctave < 8) { ++fOctave; repaint(); return true; }
+        if (kOctDown.contains(x, y) && octave() > -1) { --octave(); repaint(); return true; }
+        if (kOctUp.contains(x, y) && octave() < 8) { ++octave(); repaint(); return true; }
         const int key = keyAt(x, y);
         if (key >= 0)
         {
@@ -562,7 +575,13 @@ private:
     bool fListOpen = false;
     Hover fHover = Hover::None;
 
-    int fOctave = 4;                // keyboard starts at C4
+    int fTableRow = -1;             // Drum kit / Sound FX: chosen patch number
+
+    // keyboard octave: melodic mode starts at C4; Drum kit / Sound FX start at
+    // note 0, since there the note number is the patch number
+    int fOctaves[2] = { 4, -1 };
+    int& octave() { return fOctaves[fMode != 0 ? 1 : 0]; }
+    int octave() const { return fOctaves[fMode != 0 ? 1 : 0]; }
     int fKeyDown = -1;
     int fPreviewNote = -1;
     bool fMouseDown = false;
@@ -753,6 +772,20 @@ private:
         repaint();
     }
 
+    // Drum kit / Sound FX: the patch number (MIDI note) of the selected patch:
+    // the row last chosen if it still holds that patch, else its first entry
+    int currentTableRow() const
+    {
+        const int i = fBank.indexOf(fPatchName);
+        if (i < 0) return -1;
+        if (fTableRow >= 0 && fTableRow < static_cast<int>(fBank.table.size())
+            && fBank.table[static_cast<size_t>(fTableRow)] == i)
+            return fTableRow;
+        for (size_t n = 0; n < fBank.table.size() && n < 128; ++n)
+            if (fBank.table[n] == i) return static_cast<int>(n);
+        return -1;
+    }
+
     // Melodic: all patches. Drum/FX: the patch table, which MIDI notes index.
     int listCount() const
     {
@@ -841,7 +874,15 @@ private:
         bool dim = false;
         const int i = fBank.indexOf(fPatchName);
         if (fBank.patches.empty()) { label = "No patches loaded"; dim = true; }
-        else if (fMode != 0) label = "Patch table: notes 0-" + std::to_string(listCount() - 1) + "  (click to view)";
+        else if (fMode != 0)
+        {
+            const int row = currentTableRow();
+            if (row >= 0)
+                label = "Note " + std::to_string(row) + " (" + uze::noteName(row) + "):  "
+                      + patchLabel(fBank.patches[static_cast<size_t>(fBank.table[static_cast<size_t>(row)])]);
+            else
+                label = "Patch table: notes 0-" + std::to_string(listCount() - 1) + "  (click to choose)";
+        }
         else if (i >= 0) label = patchLabel(fBank.patches[static_cast<size_t>(i)]);
         else { label = "Choose a patch"; dim = true; }
         gui::clippedLabel(*this, { b.x + 8, b.y, b.w - 40, b.h }, b.x + 10, b.cy(), label,
@@ -851,7 +892,7 @@ private:
     void drawList()
     {
         const int count = listCount();
-        const int current = fMode == 0 ? fBank.indexOf(fPatchName) : -1;
+        const int current = fMode == 0 ? fBank.indexOf(fPatchName) : currentTableRow();
         fList.draw(*this, count, current, [&](int i, const Box& r) {
             if (fMode == 0)
             {
@@ -870,7 +911,7 @@ private:
 
     static bool isBlack(int n) { const int k = n % 12; return k == 1 || k == 3 || k == 6 || k == 8 || k == 10; }
 
-    int firstNote() const { return (fOctave + 1) * 12; } // C of fOctave
+    int firstNote() const { return (octave() + 1) * 12; } // C of the octave
 
     // returns the note under (x,y) or -1
     int keyAt(double x, double y) const
@@ -901,8 +942,8 @@ private:
 
     void drawKeyboard()
     {
-        gui::button(*this, kOctDown, "<", false, fOctave > 0);
-        gui::button(*this, kOctUp, ">", false, fOctave < 8);
+        gui::button(*this, kOctDown, "<", false, octave() > -1);
+        gui::button(*this, kOctUp, ">", false, octave() < 8);
         gui::label(*this, kOctUp.x + kOctUp.w + 10, kOctUp.cy(),
                    fMode == 0 ? "Play: " + uze::noteName(firstNote()) + " - " + uze::noteName(firstNote() + 24)
                               : "Play: notes " + std::to_string(firstNote()) + "-" + std::to_string(firstNote() + 24)

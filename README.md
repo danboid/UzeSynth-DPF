@@ -125,8 +125,10 @@ plugins are unsigned, so after copying them into place, clear macOS's quarantine
 3. Choose a mode.
    - In **Melodic** mode, pick a patch from the drop-down. You can also scroll the mouse
      wheel over it to step through patches.
-   - In **Drum kit** and **Sound FX** modes the drop-down shows which MIDI note plays which
-     patch. Note 0 (C-1) is patch 0, just as on the console.
+   - In **Drum kit** and **Sound FX** modes the drop-down lists the patch table: which MIDI
+     note plays which patch. Note 0 (C-1) is patch 0, just as on the console. Click a patch
+     to hear it (it plays while you hold the mouse button); it also becomes the patch that
+     **Edit** opens.
 
 The host's generic parameter view also shows these parameters:
 
@@ -138,8 +140,9 @@ The host's generic parameter view also shows these parameters:
 | Mode | Melodic / Drum kit / Sound FX |
 | Kernel Mixer | **VSYNC** (the kernel default, also used by PCM games built with `MIXER_CHAN4_TYPE=1` such as Donkey Kong, Space Invaders and Atomix) or **Inline** (`SOUND_MIXER=1`, e.g. Arkanoid and Super Mario, where PCM is a separate 5th channel). Pick the one the game you're writing for uses. |
 
-The keyboard at the bottom of the main page plays notes (in Drum kit and Sound FX modes the
-note number is the patch number). Click and drag along it to glide between keys; **<** and
+The keyboard at the bottom of the main page plays notes. In Drum kit and Sound FX modes the
+note number is the patch number, so there the keyboard starts at note 0; each mode remembers
+its own octave. Click and drag along it to glide between keys; **<** and
 **>** change octave.
 
 ## The patch editor
