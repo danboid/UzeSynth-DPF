@@ -8,6 +8,13 @@ code targets Windows and macOS (plus **AU** on macOS) through the
 [DPF](https://github.com/DISTRHO/DPF) plugin framework. The only dependencies are DPF
 (a git submodule) and the system's X11/OpenGL libraries.
 
+## Screenshots
+
+<img src="images/uzesynth-main.png" alt="Main UzeSynth window" />
+
+<img src="images/uzesynth-editor.png" alt="UzeSynth patch editor" />
+
+
 ## Features
 
 - **Bit-exact engine.** A line-by-line port of the kernel's `ProcessMusic()`, `TriggerNote()`,
