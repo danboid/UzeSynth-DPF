@@ -23,6 +23,8 @@ code targets Windows and macOS (plus **AU** on macOS) through the
   used by games built with `MIXER_CHAN4_TYPE=1`) play on an emulated PCM channel, including
   loop points, pitch from the step table, and the patch's command stream (envelopes, slides,
   pitch changes). Sample arrays kept in a separate file are found automatically.
+- **Integrated patch editor.** Create and edit patches (commands, timing, channel, PCM loop
+  points, names and comments), audition them while you edit, and save a ready-to-use `.inc`.
 - **Both kernel mixers.** Switch between the default VSYNC mixer and the inline mixer
   (`SOUND_MIXER=1`). They differ in how PCM loops and in the noise channel's output.
 - **Three modes:**
@@ -57,7 +59,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-The plugins end up in `build/bin/`. To install them for your user:
+The plugins end up in `build/bin/`. `ctest --test-dir build` runs the tests. To install them for your user:
 
 ```sh
 mkdir -p ~/.vst3 ~/.clap ~/.lv2 ~/.vst
@@ -100,6 +102,55 @@ The host's generic parameter view also shows these parameters:
 | Output | **Smooth**: band-limited resampling. **Raw**: the stepped 8-bit samples held at your DAW's rate. |
 | Mode | Melodic / Drum kit / Sound FX |
 | Kernel Mixer | **VSYNC** (the kernel default, also used by PCM games built with `MIXER_CHAN4_TYPE=1` such as Donkey Kong, Space Invaders and Atomix) or **Inline** (`SOUND_MIXER=1`, e.g. Arkanoid and Super Mario, where PCM is a separate 5th channel). Pick the one the game you're writing for uses. |
+
+The keyboard at the bottom of the main page plays notes (in Drum kit and Sound FX modes the
+note number is the patch number). Click and drag along it to glide between keys; **<** and
+**>** change octave.
+
+## The patch editor
+
+Click **Edit** next to the patch list. It also works with no file loaded: click **New** to
+start a patch set from scratch.
+
+- **Patches:** pick one from the drop-down, or scroll the mouse wheel over it.
+  - **New** adds a patch at the end of the patch table.
+  - **Copy** duplicates the current patch.
+  - **Delete** removes it after a second click to confirm. Its slot in the patch table is
+    left empty, so the other patches keep their numbers.
+- **Name** and **Comment** are typed. Names must be valid C identifiers. A PCM patch's name
+  is also its sample array's name.
+- **Channel:** Wave or Noise. PCM patches show their sample size and **Loop** start/end
+  instead; these turn red if they don't make sense.
+- **Command table:** one row per patch command.
+  - Each row shows the **Wait** (frames before the command runs), the **Command** (click it to
+    choose from all 15 kernel commands), the **Value**, and its **Meaning** in plain words.
+  - The last row is the wait before the patch ends.
+  - **Insert** adds a row below the selected one, **Delete** removes it, and ▲ ▼ move it.
+- **Changing numbers**, three ways:
+  - Drag up or down on the value.
+  - Use the mouse wheel over it. Hold Shift for steps of 10.
+  - Click it, type a value and press Enter.
+- **Undo** steps back through your edits (also Ctrl+Z).
+- **▶ Play** holds a note while you press it, so `PC_NOTE_HOLD` and release phases can be
+  heard. The field next to it sets the note. You can also keep editing with the mouse wheel
+  while holding Play.
+- **Save .inc...** writes a complete patch file: sample arrays, command streams and the
+  `PatchStruct` table named `patches`, ready for `InitMusicPlayer(patches);`.
+
+Edits are part of your DAW project straight away, even before you save. The main page shows
+"(edited, unsaved)" until you do.
+
+Saving rewrites the file from the patch data. Comments directly above each patch are kept,
+but other text, `#define`s and formatting are not, so save under a new name if you want to
+keep the original file as it was.
+
+On Linux, DPF's save dialog needs the XDG desktop portal (the `xdg-desktop-portal` package
+plus `xdg-desktop-portal-gtk` or `-kde`, already present on most GNOME and KDE desktops).
+Without it, **Save .inc...** saves next to the loaded file as `NAME-edited.inc`, never
+overwriting another file, and tells you the path.
+
+Typing into fields needs the host to pass key presses to the plugin window, which some hosts
+don't do. Everything except names and comments can be done with the mouse alone.
 
 ### PCM patches
 

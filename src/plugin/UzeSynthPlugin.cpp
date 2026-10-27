@@ -46,7 +46,7 @@ protected:
     const char* getMaker() const override       { return "Uzebox community"; }
     const char* getHomePage() const override    { return "https://uzebox.org"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t getVersion() const override        { return d_version(0, 3, 0); }
+    uint32_t getVersion() const override        { return d_version(0, 4, 0); }
 
     // ------------------------------------------------------------------------
     // Init
@@ -149,6 +149,7 @@ protected:
         case kStatePatchName: state.key = UZESYNTH_STATE_PATCH_NAME; state.label = "Patch";               break;
         case kStateWaves:     state.key = UZESYNTH_STATE_WAVES;      state.label = "Wavetable data";      break;
         case kStateWavesName: state.key = UZESYNTH_STATE_WAVES_NAME; state.label = "Wavetable file name"; break;
+        case kStateModified:  state.key = UZESYNTH_STATE_MODIFIED;   state.label = "Edited, unsaved";     break;
         }
     }
 
@@ -179,6 +180,7 @@ protected:
         if (std::strcmp(key, UZESYNTH_STATE_PATCH_NAME) == 0) return String(fPatchName.c_str());
         if (std::strcmp(key, UZESYNTH_STATE_WAVES) == 0)      return String(fWavesHex.c_str());
         if (std::strcmp(key, UZESYNTH_STATE_WAVES_NAME) == 0) return String(fWavesName.c_str());
+        if (std::strcmp(key, UZESYNTH_STATE_MODIFIED) == 0)   return String(fModified.c_str());
         return String();
     }
 
@@ -221,6 +223,10 @@ protected:
         else if (std::strcmp(key, UZESYNTH_STATE_WAVES_NAME) == 0)
         {
             fWavesName = value;
+        }
+        else if (std::strcmp(key, UZESYNTH_STATE_MODIFIED) == 0)
+        {
+            fModified = value;
         }
         else if (std::strcmp(key, UZESYNTH_STATE_PATCH_NAME) == 0)
         {
@@ -283,7 +289,7 @@ private:
 
     // Non-realtime side (guarded by fStateMutex)
     Mutex fStateMutex;
-    std::string fFileText, fFileName, fPatchName, fWavesHex, fWavesName;
+    std::string fFileText, fFileName, fPatchName, fWavesHex, fWavesName, fModified;
     uze::PatchBank fBank;
     uze::Wavetable fWaves = uze::defaultWavetable();
     Pending fPending;

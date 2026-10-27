@@ -32,6 +32,7 @@ struct Patch {
     std::string name;     // C identifier of the command stream array (PCM: of the sample)
     std::string comment;  // comment directly above the declaration, if any
     std::string sampleName;      // PCM: name of the sample array
+    std::string cmdName;         // name of the command stream array (empty = NULL)
     bool sampleMissing = false;  // PCM: sample array not found in the loaded file(s)
     PatchData   data;
 };

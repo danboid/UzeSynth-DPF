@@ -26,6 +26,8 @@ struct Token {
     std::string text;
     long value = 0;          // for numbers / char literals
     bool newlineBefore = false;
+    int line = 0;            // line the token starts on
+    int endLine = 0;         // line it ends on (differs for block comments)
 };
 
 bool isIdentStart(char c) { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
@@ -77,18 +79,19 @@ std::vector<Token> lex(const std::string& src, bool keepComments, std::map<std::
     const size_t n = src.size();
     bool atLineStart = true;
     bool sawNewline = true;
+    int line = 1;
 
     while (i < n)
     {
         const char c = src[i];
 
-        if (c == '\n') { atLineStart = true; sawNewline = true; ++i; continue; }
+        if (c == '\n') { atLineStart = true; sawNewline = true; ++line; ++i; continue; }
         if (std::isspace(static_cast<unsigned char>(c))) { ++i; continue; }
 
         // preprocessor line
         if (c == '#' && atLineStart)
         {
-            std::string line;
+            std::string directive;
             ++i;
             while (i < n && src[i] != '\n')
             {
@@ -96,22 +99,23 @@ std::vector<Token> lex(const std::string& src, bool keepComments, std::map<std::
                 {
                     while (i < n && src[i] != '\n') ++i;
                     ++i;
-                    line += ' ';
+                    directive += ' ';
+                    ++line;
                     continue;
                 }
-                line += src[i++];
+                directive += src[i++];
             }
             if (defines != nullptr)
             {
                 // strip comments from the directive
-                std::vector<Token> toks = lex(line, false, nullptr);
+                std::vector<Token> toks = lex(directive, false, nullptr);
                 if (toks.size() >= 2 && toks[0].kind == Tok::Ident && toks[0].text == "define"
                     && toks[1].kind == Tok::Ident)
                 {
                     // function-like macros are not supported
-                    const size_t namePos = line.find(toks[1].text);
+                    const size_t namePos = directive.find(toks[1].text);
                     const size_t after = namePos + toks[1].text.size();
-                    if (after < line.size() && line[after] == '(')
+                    if (after < directive.size() && directive[after] == '(')
                         continue;
                     (*defines)[toks[1].text] = std::vector<Token>(toks.begin() + 2, toks.end());
                 }
@@ -127,6 +131,7 @@ std::vector<Token> lex(const std::string& src, bool keepComments, std::map<std::
 
         Token t;
         t.newlineBefore = sawNewline;
+        t.line = t.endLine = line;
         sawNewline = false;
 
         if (c == '/' && i + 1 < n && src[i + 1] == '/')
@@ -145,6 +150,9 @@ std::vector<Token> lex(const std::string& src, bool keepComments, std::map<std::
             if (j == std::string::npos) j = n;
             t.kind = Tok::Comment;
             t.text = trim(src.substr(i + 2, j - i - 2));
+            for (size_t q = i; q < j && q < n; ++q)
+                if (src[q] == '\n') ++line;
+            t.endLine = line;
             i = (j == n) ? n : j + 2;
             if (keepComments) out.push_back(t);
             continue;
@@ -524,16 +532,20 @@ Scan scanDeclarations(const std::string& text)
     std::vector<Token> toks;
     std::vector<std::string> commentBefore;
     std::string pending;
+    int pendingEnd = -100;
     for (const Token& k : all)
     {
         if (k.kind == Tok::Comment)
         {
             pending = k.text;
+            pendingEnd = k.endLine;
             continue;
         }
         toks.push_back(k);
-        commentBefore.push_back(pending);
+        // only a comment directly above (or on the same line as) the token counts
+        commentBefore.push_back(k.line - pendingEnd <= 1 ? pending : std::string());
         pending.clear();
+        pendingEnd = -100;
     }
 
     size_t stmtStart = 0;
@@ -719,7 +731,11 @@ PatchBank parsePatchFile(const std::string& text)
                                   : (sample != nullptr ? sample->comment : std::string());
                         p.sampleName = pcmId;
                         p.data.type = PatchType::Pcm;
-                        if (cmd != nullptr) p.data.stream = cmd->bytes;
+                        if (cmd != nullptr)
+                        {
+                            p.data.stream = cmd->bytes;
+                            p.cmdName = cmdId;
+                        }
                         p.data.loopStart = static_cast<int32_t>(loopStart);
                         p.data.loopEnd = static_cast<int32_t>(loopEnd);
                         if (sample != nullptr)
@@ -748,6 +764,7 @@ PatchBank parsePatchFile(const std::string& text)
                     {
                         Patch p;
                         p.name = cmd->name;
+                        p.cmdName = cmd->name;
                         p.comment = cmd->comment;
                         p.data.type = type == 1 ? PatchType::Noise : PatchType::Wave;
                         p.data.stream = cmd->bytes;
@@ -771,6 +788,7 @@ PatchBank parsePatchFile(const std::string& text)
             continue;
         Patch p;
         p.name = a.name;
+        p.cmdName = a.name;
         p.comment = a.comment;
         p.data.type = a.hasNoise ? PatchType::Noise : PatchType::Wave;
         p.data.stream = a.bytes;
