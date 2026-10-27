@@ -2,7 +2,12 @@ name: build
 
 on:
   push:
-    paths-ignore:
+    branches:
+      - '**'
+    # pushing a tag like v0.4.0 builds everything and publishes a release
+    tags:
+      - 'v*'
+    paths-ignore:   # (not applied to tag pushes)
       - '**.md'
   pull_request:
     paths-ignore:
@@ -64,7 +69,42 @@ jobs:
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
 
+      # Zip here: artifact storage drops file permissions (executable bits),
+      # zip keeps them
+      - name: Package
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="dev-${GITHUB_SHA::7}"; fi
+          ZIP="uzesynth-${VERSION}-${{ matrix.name }}.zip"
+          mkdir -p dist
+          cp README.md LICENSE build/bin/
+          (cd build/bin && zip -r -y -q "../../dist/$ZIP" .)
+          ls -l dist
+
       - uses: actions/upload-artifact@v6
         with:
           name: uzesynth-${{ matrix.name }}
-          path: build/bin/
+          path: dist/*.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: uzesynth-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "UzeSynth ${GITHUB_REF_NAME#v}" \
+            --generate-notes

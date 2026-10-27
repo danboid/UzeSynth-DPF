@@ -100,6 +100,20 @@ Every push to GitHub builds and tests all three platforms (`.github/workflows/bu
 The built plugins can be downloaded from each run's page under **Artifacts**. Commits that
 only change `.md` files don't start a build.
 
+### Publishing a release
+
+Push a tag whose name starts with `v`:
+
+```sh
+git tag -a v0.4.0 -m "UzeSynth 0.4.0"
+git push origin v0.4.0
+```
+
+The workflow then builds and tests all three platforms and, if they all succeed, creates a
+GitHub release named after the tag, with `uzesynth-0.4.0-Linux.zip`, `-macOS.zip` and
+`-Windows.zip` attached and release notes listing the changes since the previous release.
+You can edit the release text on GitHub afterwards.
+
 ## Using it
 
 1. Click the **folder** icon and load a patch file, for example a game's `patches.inc`.
