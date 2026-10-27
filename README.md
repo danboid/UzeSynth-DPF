@@ -45,6 +45,18 @@ code targets Windows and macOS (plus **AU** on macOS) through the
 - **Kernel MIDI controllers:** CC 7 (track volume), 11 (expression), 92 (tremolo level),
   100 (tremolo rate), plus 120/123 (all sound/notes off).
 
+## Current release requirements
+
+The current github builds will only work on certain OS versions.
+
+The Windows builds require Windows 10 64 bit or newer.
+
+The Apple binaries available on the Releases page are only for Apple Silicon Macs.
+
+The Linux binaries are built with Ubuntu 26.04 currently so if you are running an older
+distro you'll probably have to build the plugin yourself. Its a small program so it builds
+in no time.
+
 ## Building on Linux
 
 Install a compiler, CMake and the X11/OpenGL headers.
