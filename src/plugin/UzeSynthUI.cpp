@@ -78,11 +78,14 @@ class UzeSynthUI : public UI, public PatchEditor::Host
 {
 public:
     UzeSynthUI()
-        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT, true),
+        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT),
           fEditor(*this, fBank, fPatchName)
     {
         loadSharedResources();
         fList.area = { kPad, 44, kW - 2 * kPad, kH - 52 };
+        // Scale for high-DPI displays ourselves, as DPF's examples do. (DPF's
+        // automatic scaling applied a host-given scale twice, e.g. CLAP on Windows.)
+        applyScaleFactor(getScaleFactor());
     }
 
 protected:
@@ -182,6 +185,11 @@ protected:
 
     void onNanoDisplay() override
     {
+        // everything is laid out in 520x460 design units
+        const float s = static_cast<float>(drawScale());
+        if (s != 1.0f)
+            scale(s, s);
+
         if (fEditorOpen)
         {
             fEditor.draw(*this);
@@ -243,7 +251,7 @@ protected:
 
     bool onMouse(const MouseEvent& ev) override
     {
-        const double x = ev.pos.getX(), y = ev.pos.getY();
+        const double x = ev.pos.getX() / drawScale(), y = ev.pos.getY() / drawScale();
         if (ev.button == 1)
             fMouseDown = ev.press;
 
@@ -369,7 +377,7 @@ protected:
 
     bool onMotion(const MotionEvent& ev) override
     {
-        const double x = ev.pos.getX(), y = ev.pos.getY();
+        const double x = ev.pos.getX() / drawScale(), y = ev.pos.getY() / drawScale();
         if (fEditorOpen)
         {
             fEditor.motion(x, y, ev.mod);
@@ -414,7 +422,7 @@ protected:
 
     bool onScroll(const ScrollEvent& ev) override
     {
-        const double x = ev.pos.getX(), y = ev.pos.getY();
+        const double x = ev.pos.getX() / drawScale(), y = ev.pos.getY() / drawScale();
         if (fEditorOpen)
         {
             const bool r = fEditor.scroll(x, y, ev.delta.getY(), ev.mod);
@@ -455,6 +463,34 @@ protected:
         const bool r = fEditor.character(ev.string, ev.character);
         if (r) repaint();
         return r;
+    }
+
+    // ------------------------------------------------------------------------
+    // High-DPI scaling
+
+    void uiScaleFactorChanged(const double scaleFactor) override
+    {
+        applyScaleFactor(scaleFactor);
+    }
+
+    void applyScaleFactor(double scaleFactor)
+    {
+        if (!(scaleFactor > 0.0))
+            scaleFactor = 1.0;
+        const uint w = static_cast<uint>(DISTRHO_UI_DEFAULT_WIDTH * scaleFactor + 0.5);
+        const uint h = static_cast<uint>(DISTRHO_UI_DEFAULT_HEIGHT * scaleFactor + 0.5);
+        setGeometryConstraints(w, h, true);
+        if (getWidth() != w || getHeight() != h)
+            setSize(w, h);
+    }
+
+    // window pixels per design unit
+    double drawScale() const
+    {
+        const double sx = static_cast<double>(getWidth()) / DISTRHO_UI_DEFAULT_WIDTH;
+        const double sy = static_cast<double>(getHeight()) / DISTRHO_UI_DEFAULT_HEIGHT;
+        const double sc = sx < sy ? sx : sy;
+        return sc > 0.0 ? sc : 1.0;
     }
 
     // ------------------------------------------------------------------------
