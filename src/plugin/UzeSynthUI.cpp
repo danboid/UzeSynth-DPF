@@ -481,7 +481,15 @@ protected:
         const uint h = static_cast<uint>(DISTRHO_UI_DEFAULT_HEIGHT * scaleFactor + 0.5);
         setGeometryConstraints(w, h, true);
         if (getWidth() != w || getHeight() != h)
+        {
             setSize(w, h);
+            // On Windows the window can already have this size (DPF creates it
+            // scaled), so no resize event follows and DPF would keep reporting
+            // the unscaled size, putting clicks in the wrong places. Set the
+            // widget size directly too.
+            if (getWidth() != w || getHeight() != h)
+                Widget::setSize(w, h);
+        }
     }
 
     // window pixels per design unit

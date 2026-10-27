@@ -46,7 +46,7 @@ protected:
     const char* getMaker() const override       { return "Uzebox community"; }
     const char* getHomePage() const override    { return "https://uzebox.org"; }
     const char* getLicense() const override     { return "GPL-3.0-or-later"; }
-    uint32_t getVersion() const override        { return d_version(0, 4, 2); }
+    uint32_t getVersion() const override        { return d_version(0, 4, 3); }
 
     // ------------------------------------------------------------------------
     // Init
