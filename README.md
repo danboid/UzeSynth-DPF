@@ -229,6 +229,7 @@ modulates with wave 0 of the *loaded* table, exactly as the kernel does.
 `build/bin/uzerender` (built along with the plugin) lists the patches in a file, or renders
 one patch to an 8-bit, 15734 Hz WAV. The WAV holds exactly the samples a Uzebox writes to
 its audio output, which is handy for comparing against cuzebox or real hardware.
+Run `uzerender --help` for a full description of its arguments and options.
 
 ```sh
 uzerender patches.inc                              # list patch table

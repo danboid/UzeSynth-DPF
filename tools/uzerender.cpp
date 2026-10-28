@@ -30,11 +30,59 @@
 static void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back(uint8_t(x >> (8 * i))); }
 static void put16(std::vector<uint8_t>& v, uint16_t x) { v.push_back(uint8_t(x)); v.push_back(uint8_t(x >> 8)); }
 
-static void usage(const char* argv0)
+static const char* const kHelp =
+    "uzerender - list or render the patches in a Uzebox patch file (.inc)\n"
+    "\n"
+    "Usage:\n"
+    "  uzerender [options] PATCHFILE\n"
+    "      List the patches in PATCHFILE, with their patch numbers.\n"
+    "\n"
+    "  uzerender [options] PATCHFILE PATCH OUTPUT.wav [NOTE] [SECONDS] [VELOCITY]\n"
+    "      Render one patch to an 8-bit, 15734 Hz mono WAV file: exactly the\n"
+    "      samples a Uzebox outputs. The note is held for SECONDS, then released\n"
+    "      and recorded for 2 more seconds.\n"
+    "        PATCH     patch name (e.g. patch03) or patch number (e.g. 3)\n"
+    "        NOTE      MIDI note number, 60 = middle C (default 60)\n"
+    "        SECONDS   how long the note is held (default 1, decimals allowed)\n"
+    "        VELOCITY  1-127 (default 127)\n"
+    "\n"
+    "Options:\n"
+    "  --waves FILE  use a custom wavetable (a game's MIXER_WAVES .inc, a C array\n"
+    "                or raw binary) instead of the kernel's 10 default waves\n"
+    "  --drum        drum kit mode: PATCH must be a patch number; it is played on\n"
+    "                the noise channel, as on MIDI channel 4 in Uzebox songs\n"
+    "                (NOTE is ignored)\n"
+    "  --fx          sound FX mode: PATCH must be a patch number; it is played\n"
+    "                like TriggerFx() (note 80, NOTE is ignored)\n"
+    "  --inline      emulate the inline mixer (SOUND_MIXER=1) instead of the\n"
+    "                default VSYNC mixer\n"
+    "  --add FILE    also read FILE, e.g. PCM sample data kept in another .inc\n"
+    "                (sample files next to PATCHFILE are found automatically)\n"
+    "  -h, --help    show this help\n"
+    "\n"
+    "Examples:\n"
+    "  uzerender patches.inc\n"
+    "      list the patches in patches.inc\n"
+    "  uzerender patches.inc patch03 out.wav\n"
+    "      render patch03 at middle C, held for 1 second\n"
+    "  uzerender patches.inc patch03 out.wav 72 0.5 100\n"
+    "      render patch03 at note 72, held for 0.5 seconds, velocity 100\n"
+    "  uzerender --waves sounds.inc patches.inc 5 out.wav\n"
+    "      render patch number 5 using the wavetable in sounds.inc\n"
+    "  uzerender --drum patches.inc 7 hat.wav\n"
+    "      play patch 7 on the noise channel, as a drum track would\n"
+    "  uzerender --fx patches.inc 1 fx.wav\n"
+    "      play patch 1 as a sound effect, like TriggerFx(1, ...)\n"
+    "  uzerender patches.inc intro_PCM_Data intro.wav 20\n"
+    "      render a PCM (sample) patch at note 20\n"
+    "  uzerender --add samples.inc patches.inc 7 s.wav\n"
+    "      read the PCM samples for patch 7 from samples.inc\n"
+    "  uzerender --inline patches.inc 7 s.wav\n"
+    "      render patch 7 as the inline mixer would play it\n";
+
+static void usage()
 {
-    std::fprintf(stderr,
-                 "usage: %s [--waves FILE] [--drum|--fx] [--inline] [--add FILE]... file.inc [patch out.wav [note=60] [hold_seconds=1] [velocity=127]]\n",
-                 argv0);
+    std::fputs(kHelp, stdout);
 }
 
 int main(int argc, char** argv)
@@ -52,12 +100,22 @@ int main(int argc, char** argv)
         else if (a == "--fx") mode = uze::UzeboxSynth::PlayMode::SoundFx;
         else if (a == "--inline") inlineMixer = true;
         else if (a == "--add" && i + 1 < argc) extraFiles.push_back(argv[++i]);
-        else if (a.size() > 1 && a[0] == '-' && a[1] == '-') { usage(argv[0]); return 1; }
+        else if (a == "-h" || a == "--help") { usage(); return 0; }
+        else if (a == "--waves" || a == "--add")
+        {
+            std::fprintf(stderr, "uzerender: %s needs a FILE (try uzerender --help)\n", a.c_str());
+            return 1;
+        }
+        else if (a.size() > 1 && a[0] == '-' && a[1] == '-')
+        {
+            std::fprintf(stderr, "uzerender: unknown option %s (try uzerender --help)\n", a.c_str());
+            return 1;
+        }
         else args.push_back(a);
     }
     if (args.empty())
     {
-        usage(argv[0]);
+        usage();
         return 1;
     }
 
