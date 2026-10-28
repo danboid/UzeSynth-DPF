@@ -115,6 +115,9 @@ plugins are unsigned, so after copying them into place, clear macOS's quarantine
 
 ## Using it
 
+The integrated UzeSynth keyboard doesn't make any sound when its keys are clicked until you
+load or create a patch.
+
 1. Click the **folder** icon and load a patch file, for example a game's `patches.inc`.
    If its patch table refers to PCM sample arrays that aren't in that file, UzeSynth looks
    for them in the other `.inc`/`.h` files in the same folder (and in `data/` and the parent
