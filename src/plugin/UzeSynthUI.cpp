@@ -594,6 +594,11 @@ protected:
         repaint();
     }
 
+    void editorWantsKeyboard() override
+    {
+        getWindow().focus();
+    }
+
     void editorClose() override
     {
         if (fCommitPending)

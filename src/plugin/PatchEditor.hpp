@@ -37,6 +37,7 @@ public:
         virtual void editorPreview(bool on) = 0;           // hold the Play button
         virtual void editorSave() = 0;
         virtual void editorClose() = 0;
+        virtual void editorWantsKeyboard() = 0;            // a field is being typed into
     };
 
     static constexpr float W = DISTRHO_UI_DEFAULT_WIDTH;
@@ -624,6 +625,9 @@ private:
     {
         fFocus = f;
         fFocusRow = row;
+        // make sure key presses reach the plugin window (some hosts keep the
+        // keyboard focus themselves, e.g. CLAP on Windows, VST2 on Linux)
+        fHost.editorWantsKeyboard();
         const uze::Patch* p = patch();
         if (f == F::Name) fBuffer = p ? p->name : "";
         else if (f == F::Comment) fBuffer = p ? p->comment : "";
